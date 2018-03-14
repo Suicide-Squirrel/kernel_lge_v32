@@ -28,7 +28,14 @@
 #include "../inc/fci_hal.h"
 #include "../inc/fci_tun.h"
 #include "../inc/fc8080_regs.h"
+
 #include <linux/kernel.h>
+#include <linux/device.h>
+#include <soc/qcom/lge/board_lge.h>
+
+unsigned int freq_xtal;
+unsigned int clk_ratio;
+
 #define POWER_SAVE_MODE
 #undef FEATURE_DEBUG_LOG
 
@@ -39,7 +46,7 @@
 
 static fci_s32 fc8080_set_xtal(HANDLE handle)
 {
-#if (FC8080_FREQ_XTAL == 24576)
+if (freq_xtal == 24576) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x04000000);
     bbm_byte_write(handle, BBM_NCO_INV, 0x80);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x80);
@@ -62,7 +69,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x13);
     bbm_byte_write(handle, BBM_COEF0E, 0x4f);
     bbm_byte_write(handle, BBM_COEF0F, 0x6b);
-#elif (FC8080_FREQ_XTAL == 16384)
+}
+else if (freq_xtal == 16384) {
     /* clock mode */
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x04000000);
     bbm_byte_write(handle, BBM_NCO_INV, 0x80);
@@ -86,7 +94,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x13);
     bbm_byte_write(handle, BBM_COEF0E, 0x4f);
     bbm_byte_write(handle, BBM_COEF0F, 0x6b);
-#elif (FC8080_FREQ_XTAL == 19200)
+}
+else if (freq_xtal == 19200) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x0369d037);
     bbm_byte_write(handle, BBM_NCO_INV, 0x96);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x6d);
@@ -109,7 +118,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x1f);
     bbm_byte_write(handle, BBM_COEF0E, 0x49);
     bbm_byte_write(handle, BBM_COEF0F, 0x5c);
-#elif (FC8080_FREQ_XTAL == 24000)
+}
+else if (freq_xtal == 24000) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x02bb0cf8);
     bbm_byte_write(handle, BBM_NCO_INV, 0xbc);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x57);
@@ -132,7 +142,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x26);
     bbm_byte_write(handle, BBM_COEF0E, 0x42);
     bbm_byte_write(handle, BBM_COEF0F, 0x4e);
-#elif (FC8080_FREQ_XTAL == 26000)
+}
+else if (freq_xtal == 26000) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x03c7ea98);
     bbm_byte_write(handle, BBM_NCO_INV, 0x87);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x79);
@@ -155,7 +166,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x19);
     bbm_byte_write(handle, BBM_COEF0E, 0x4d);
     bbm_byte_write(handle, BBM_COEF0F, 0x65);
-#elif (FC8080_FREQ_XTAL == 27000)
+}
+else if (freq_xtal == 27000) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x03a4114b);
     bbm_byte_write(handle, BBM_NCO_INV, 0x8d);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x75);
@@ -178,7 +190,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x1c);
     bbm_byte_write(handle, BBM_COEF0E, 0x4b);
     bbm_byte_write(handle, BBM_COEF0F, 0x61);
-#elif (FC8080_FREQ_XTAL == 27120)
+}
+else if (freq_xtal == 27120) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x039ff180);
     bbm_byte_write(handle, BBM_NCO_INV, 0x8d);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x74);
@@ -201,7 +214,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x1c);
     bbm_byte_write(handle, BBM_COEF0E, 0x4b);
     bbm_byte_write(handle, BBM_COEF0F, 0x61);
-#elif (FC8080_FREQ_XTAL == 32000)
+}
+else if (freq_xtal == 32000) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x03126eb8);
     bbm_byte_write(handle, BBM_NCO_INV, 0xa7);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x62);
@@ -224,7 +238,8 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x1c);
     bbm_byte_write(handle, BBM_COEF0E, 0x4b);
     bbm_byte_write(handle, BBM_COEF0F, 0x61);
-#elif (FC8080_FREQ_XTAL == 38400)
+}
+else if (freq_xtal == 38400) {
     bbm_long_write(handle, BBM_NCO_OFFSET, 0x0369d037);
     bbm_byte_write(handle, BBM_NCO_INV, 0x96);
     bbm_byte_write(handle, BBM_EZ_CONST, 0x6d);
@@ -247,7 +262,7 @@ static fci_s32 fc8080_set_xtal(HANDLE handle)
     bbm_byte_write(handle, BBM_COEF0D, 0x1f);
     bbm_byte_write(handle, BBM_COEF0E, 0x49);
     bbm_byte_write(handle, BBM_COEF0F, 0x5c);
-#endif
+}
     return BBM_OK;
 }
 
@@ -273,6 +288,16 @@ fci_s32 fc8080_probe(HANDLE handle)
 
 fci_s32 fc8080_init(HANDLE handle)
 {
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() < HW_REV_A) {
+        freq_xtal = 19200;
+    } else {
+        freq_xtal = 27120;
+    }
+#else
+    freq_xtal = 19200;
+#endif
+
     fc8080_reset(handle);
     fc8080_set_xtal(handle);
 
@@ -294,17 +319,17 @@ fci_s32 fc8080_init(HANDLE handle)
     bbm_write(handle, BBM_PGA_GAIN_MAX, 0x18);
     bbm_write(handle, BBM_PGA_GAIN_MIN, 0xe8);
 
-#if (FC8080_FREQ_XTAL == 24000)
+if (freq_xtal == 24000) {
     bbm_write(handle, BBM_SYNC_MTH, 0x43);
-#else
+} else {
     bbm_write(handle, BBM_SYNC_MTH, 0xc3);
-#endif
+}
 
-#if (FC8080_FREQ_XTAL == 16384) || (FC8080_FREQ_XTAL == 24576)
+if ((freq_xtal == 16384) || (freq_xtal == 24576)) {
     bbm_write(handle, BBM_SFSYNC_ON, 0x00);
-#else
+} else {
     bbm_write(handle, BBM_SFSYNC_ON, 0x01);
-#endif
+}
 
     bbm_write(handle, BBM_RESYNC_EN, 0x01);
     bbm_write(handle, BBM_RESYNC_AUTO_CONDITION_EN, 0x00);

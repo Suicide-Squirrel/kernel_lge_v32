@@ -122,7 +122,7 @@ static int rmnet_usb_ctrl_dmux(struct ctrl_pkt_list_elem *clist)
 	hdr = (struct mux_hdr *)clist->cpkt.data;
 	pad_len = hdr->padding_info & MUX_CTRL_PADLEN_MASK;
 	if (pad_len > MAX_PAD_BYTES(4)) {
-		pr_err_ratelimited("%s: Invalid pad len %d\n", __func__,
+		pr_err_ratelimited("%s: Invalid pad len %zu\n", __func__,
 				pad_len);
 		return -EINVAL;
 	}
@@ -135,7 +135,7 @@ static int rmnet_usb_ctrl_dmux(struct ctrl_pkt_list_elem *clist)
 
 	total_len = ntohs(hdr->pkt_len_w_padding);
 	if (!total_len || !(total_len - pad_len)) {
-		pr_err_ratelimited("%s: Invalid pkt length %d\n", __func__,
+		pr_err_ratelimited("%s: Invalid pkt length %zu\n", __func__,
 				total_len);
 		return -EINVAL;
 	}
@@ -641,7 +641,7 @@ ctrl_read:
 	bytes_to_read = (uint32_t)(list_elem->cpkt.data_size);
 	if (bytes_to_read > count) {
 		spin_unlock_irqrestore(&dev->rx_lock, flags);
-		dev_err(dev->devicep, "%s: Packet size %d > buf size %d\n",
+		dev_err(dev->devicep, "%s: Packet size %d > buf size %zu\n",
 			__func__, bytes_to_read, count);
 		return -ENOMEM;
 	}
@@ -688,7 +688,7 @@ static ssize_t rmnet_ctl_write(struct file *file, const char __user * buf,
 	if (!test_bit(RMNET_CTRL_DEV_READY, &dev->cudev->status))
 		return -ENETRESET;
 
-	DBG("%s: Writing %i bytes on %s\n", __func__, size, dev->name);
+	DBG("%s: Writing %zu bytes on %s\n", __func__, size, dev->name);
 
 	total_len = size;
 
@@ -934,8 +934,8 @@ void rmnet_usb_ctrl_disconnect(struct rmnet_ctrl_udev *dev)
 			rmnet_usb_ctrl_free_rx_list(cdev);
 			wake_up(&cdev->read_wait_queue);
 			mutex_lock(&cdev->dev_lock);
-			cdev->cbits_tolocal = ~ACM_CTRL_CD;
-			cdev->cbits_tomdm = ~ACM_CTRL_DTR;
+			cdev->cbits_tolocal = (unsigned)~ACM_CTRL_CD;
+			cdev->cbits_tomdm = (unsigned)~ACM_CTRL_DTR;
 			mutex_unlock(&cdev->dev_lock);
 		}
 	} else {
@@ -944,8 +944,8 @@ void rmnet_usb_ctrl_disconnect(struct rmnet_ctrl_udev *dev)
 		rmnet_usb_ctrl_free_rx_list(cdev);
 		wake_up(&cdev->read_wait_queue);
 		mutex_lock(&cdev->dev_lock);
-		cdev->cbits_tolocal = ~ACM_CTRL_CD;
-		cdev->cbits_tomdm = ~ACM_CTRL_DTR;
+		cdev->cbits_tolocal = (unsigned)~ACM_CTRL_CD;
+		cdev->cbits_tomdm = (unsigned)~ACM_CTRL_DTR;
 		mutex_unlock(&cdev->dev_lock);
 	}
 

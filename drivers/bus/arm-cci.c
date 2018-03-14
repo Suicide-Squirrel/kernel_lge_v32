@@ -65,7 +65,10 @@ static unsigned int nb_cci_ports;
 static void __iomem *cci_ctrl_base;
 static unsigned long cci_ctrl_phys;
 
+#ifdef CONFIG_HW_PERF_EVENTS
 static u32 from_idle;
+#endif
+
 static u32 cci_version;
 
 #ifdef CONFIG_HW_PERF_EVENTS

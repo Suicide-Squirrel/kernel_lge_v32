@@ -277,7 +277,7 @@ static void dwc3_ep0_stall_and_restart(struct dwc3 *dwc)
 
 	/* stall is always issued on EP0 */
 	dep = dwc->eps[0];
-	__dwc3_gadget_ep_set_halt(dep, 1);
+	__dwc3_gadget_ep_set_halt(dep, 1, false);
 	dep->flags = DWC3_EP_ENABLED;
 	dwc->delayed_status = false;
 
@@ -519,7 +519,7 @@ static int dwc3_ep0_handle_feature(struct dwc3 *dwc,
 				return -EINVAL;
 			if (set == 0 && (dep->flags & DWC3_EP_WEDGE))
 				break;
-			ret = __dwc3_gadget_ep_set_halt(dep, set);
+			ret = __dwc3_gadget_ep_set_halt(dep, set, true);
 			if (ret)
 				return -EINVAL;
 			break;
@@ -728,6 +728,9 @@ static int dwc3_ep0_set_isoch_delay(struct dwc3 *dwc, struct usb_ctrlrequest *ct
 static int dwc3_ep0_std_request(struct dwc3 *dwc, struct usb_ctrlrequest *ctrl)
 {
 	int ret;
+#ifdef CONFIG_LGE_USB_CHARGING_SPEC_VZW
+	u16	w_value = le16_to_cpu(ctrl->wValue);
+#endif
 
 	switch (ctrl->bRequest) {
 	case USB_REQ_GET_STATUS:
@@ -745,9 +748,18 @@ static int dwc3_ep0_std_request(struct dwc3 *dwc, struct usb_ctrlrequest *ctrl)
 	case USB_REQ_SET_ADDRESS:
 		dev_vdbg(dwc->dev, "USB_REQ_SET_ADDRESS\n");
 		ret = dwc3_ep0_set_address(dwc, ctrl);
+#ifdef CONFIG_LGE_USB_CHARGING_SPEC_VZW
+		dwc->dotg->charger->vzw_usb_config_state = VZW_USB_STATE_CONNECTED;
+#endif
 		break;
 	case USB_REQ_SET_CONFIGURATION:
 		dev_vdbg(dwc->dev, "USB_REQ_SET_CONFIGURATION\n");
+#ifdef CONFIG_LGE_USB_CHARGING_SPEC_VZW
+		if (w_value) {
+			dwc->dotg->charger->vzw_usb_config_state = VZW_USB_STATE_CONFIGURED;
+			queue_delayed_work(system_nrt_wq, dwc->dotg->charger->drv_check_state_wq, 0);
+		}
+#endif
 		ret = dwc3_ep0_set_config(dwc, ctrl);
 		break;
 	case USB_REQ_SET_SEL:

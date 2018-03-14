@@ -257,7 +257,78 @@ struct ndisc_options *ndisc_parse_options(u8 *opt, int opt_len,
 	}
 	return ndopts;
 }
-
+/* 2016-05-29 hyoseab.song@lge.com LGP_DATA_KERNEL_BUGFIX_ROUTE_IPV6 [START] */
+struct ndisc_options *ndisc_parse_options_ra(u8 *opt, int opt_len,
+                                             struct ndisc_options *ndopts,struct inet6_dev *in6_dev)
+{
+    struct nd_opt_hdr *nd_opt = (struct nd_opt_hdr *)opt;
+    bool has_prefix_info = false;
+    if (!nd_opt || opt_len < 0 || !ndopts)
+        return NULL;
+    memset(ndopts, 0, sizeof(*ndopts));
+    while (opt_len) {
+        int l;
+        if (opt_len < sizeof(struct nd_opt_hdr))
+            return NULL;
+        l = nd_opt->nd_opt_len << 3;
+        if (opt_len < l || l == 0)
+            return NULL;
+        switch (nd_opt->nd_opt_type) {
+        case ND_OPT_SOURCE_LL_ADDR:
+        case ND_OPT_TARGET_LL_ADDR:
+        case ND_OPT_MTU:
+        case ND_OPT_REDIRECT_HDR:
+            if (ndopts->nd_opt_array[nd_opt->nd_opt_type]) {
+                ND_PRINTK(2, warn,
+                      "%s: duplicated ND6 option found: type=%d\n",
+                      __func__, nd_opt->nd_opt_type);
+            } else {
+                ndopts->nd_opt_array[nd_opt->nd_opt_type] = nd_opt;
+            }
+            break;
+        case ND_OPT_PREFIX_INFO:
+                has_prefix_info = true;
+                ndopts->nd_opts_pi_end = nd_opt;
+                if (!ndopts->nd_opt_array[nd_opt->nd_opt_type])
+                    ndopts->nd_opt_array[nd_opt->nd_opt_type] = nd_opt;
+            break;
+#ifdef CONFIG_IPV6_ROUTE_INFO
+        case ND_OPT_ROUTE_INFO:
+            ndopts->nd_opts_ri_end = nd_opt;
+            if (!ndopts->nd_opts_ri)
+                ndopts->nd_opts_ri = nd_opt;
+            break;
+#endif
+        default:
+            if (ndisc_is_useropt(nd_opt)) {
+                ndopts->nd_useropts_end = nd_opt;
+                if (!ndopts->nd_useropts)
+                    ndopts->nd_useropts = nd_opt;
+            } else {
+                /*
+                 * Unknown options must be silently ignored,
+                 * to accommodate future extension to the
+                 * protocol.
+                 */
+                ND_PRINTK(2, notice,
+                      "%s: ignored unsupported option; type=%d, len=%d\n",
+                      __func__,
+                      nd_opt->nd_opt_type,
+                      nd_opt->nd_opt_len);
+            }
+        }
+        opt_len -= l;
+        nd_opt = ((void *)nd_opt) + l;
+    }
+    if(strcmp(in6_dev->dev->name,"wlan0") == 0 && has_prefix_info == false){
+        printk(KERN_DEBUG "%s: RA dosen't have ND_OPT_PREFIX_INFO option; interface=%s\n",
+                      __func__,
+                      in6_dev->dev->name);
+        return NULL;
+    }
+    return ndopts;
+}
+/* 2016-05-29 hyoseab.song@lge.com LGP_DATA_KERNEL_BUGFIX_ROUTE_IPV6 [END] */
 int ndisc_mc_map(const struct in6_addr *addr, char *buf, struct net_device *dev, int dir)
 {
 	switch (dev->type) {
@@ -1099,12 +1170,18 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 			  skb->dev->name);
 		return;
 	}
-
-	if (!ndisc_parse_options(opt, optlen, &ndopts)) {
-		ND_PRINTK(2, warn, "RA: invalid ND options\n");
-		return;
-	}
-
+/* 2016-05-29 hyoseab.song@lge.com LGP_DATA_KERNEL_BUGFIX_ROUTE_IPV6 [START] */
+/* kernel original
+    if (!ndisc_parse_options(opt, optlen, &ndopts)) {
+        ND_PRINTK(2, warn, "RA: invalid ND options\n");
+        return;
+    }
+*/
+    if (!ndisc_parse_options_ra(opt, optlen, &ndopts, in6_dev)) {
+        ND_PRINTK(2, warn, "RA: invalid ND options\n");
+    return;
+    }
+/* 2016-05-29 hyoseab.song@lge.com LGP_DATA_KERNEL_BUGFIX_ROUTE_IPV6 [END] */
 	if (!ipv6_accept_ra(in6_dev))
 		goto skip_linkparms;
 
@@ -1193,7 +1270,14 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 	if (rt)
 		rt6_set_expires(rt, jiffies + (HZ * lifetime));
 	if (ra_msg->icmph.icmp6_hop_limit) {
-		in6_dev->cnf.hop_limit = ra_msg->icmph.icmp6_hop_limit;
+		/* Only set hop_limit on the interface if it is higher than
+		 * the current hop_limit.
+		 */
+		if (in6_dev->cnf.hop_limit < ra_msg->icmph.icmp6_hop_limit) {
+			in6_dev->cnf.hop_limit = ra_msg->icmph.icmp6_hop_limit;
+		} else {
+			ND_PRINTK(2, warn, "RA: Got route advertisement with lower hop_limit than current\n");
+		}
 		if (rt)
 			dst_metric_set(&rt->dst, RTAX_HOPLIMIT,
 				       ra_msg->icmph.icmp6_hop_limit);
@@ -1595,7 +1679,7 @@ static int ndisc_netdev_event(struct notifier_block *this, unsigned long event, 
 	switch (event) {
 	case NETDEV_CHANGEADDR:
 		neigh_changeaddr(&nd_tbl, dev);
-		fib6_run_gc(~0UL, net);
+		fib6_run_gc(0, net, false);
 		idev = in6_dev_get(dev);
 		if (!idev)
 			break;
@@ -1605,7 +1689,7 @@ static int ndisc_netdev_event(struct notifier_block *this, unsigned long event, 
 		break;
 	case NETDEV_DOWN:
 		neigh_ifdown(&nd_tbl, dev);
-		fib6_run_gc(~0UL, net);
+		fib6_run_gc(0, net, false);
 		break;
 	case NETDEV_NOTIFY_PEERS:
 		ndisc_send_unsol_na(dev);

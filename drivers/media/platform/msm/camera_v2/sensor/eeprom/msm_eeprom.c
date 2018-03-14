@@ -860,16 +860,7 @@ static int eeprom_config_read_cal_data32(struct msm_eeprom_ctrl_t *e_ctrl,
 
 	rc = copy_to_user(ptr_dest, e_ctrl->cal_data.mapdata,
 		cdata.cfg.read_data.num_bytes);
-/*LGE_CHANGE_S, fixed eeprom crash, 2014-10-20, ejoon.kim@lge.com */
-#if 0
-	/* should only be called once.  free kernel resource */
-	if (!rc) {
-		kfree(e_ctrl->cal_data.mapdata);
-		kfree(e_ctrl->cal_data.map);
-		memset(&e_ctrl->cal_data, 0, sizeof(e_ctrl->cal_data));
-	}
-#endif
-/*LGE_CHANGE_E, fixed eeprom crash, 2014-10-20, ejoon.kim@lge.com */
+
 	return rc;
 }
 
@@ -1162,8 +1153,6 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		pr_err("failed rc %d\n", rc);
 		goto memdata_free;
 	}
-
-	pr_err("%s: lge_get_board_revno = %d\n", __func__, lge_get_board_revno());
 	rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
 	if (rc < 0) {
 		pr_err("%s read_eeprom_memory failed\n", __func__);
@@ -1174,19 +1163,6 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 			e_ctrl->cal_data.mapdata[j]);
 
 	e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data);
-	if (verify_eeprom_checksum(e_ctrl) < 0) {
-		pr_err("%s: %s : eeprom data checksum failed!\n", __func__,
-			e_ctrl->eboard_info->eeprom_name);
-	} else {
-		pr_info("%s: %s : eeprom data checksum success!\n", __func__,
-					e_ctrl->eboard_info->eeprom_name);
-	}
-	/* LGE_CHANGE_S, camera id, 2015-04-07, byungsoo.moon@lge.com */
-	if (strcmp(e_ctrl->eboard_info->eeprom_name, "imx234_eeprom") == 0) {
-		main_sensor_id = e_ctrl->cal_data.mapdata[MODULE_VENDOR_ID];
-		pr_err("%s:main_sensor_id 0x%x\n", __func__, main_sensor_id);
-	}
-	/* LGE_CHANGE_E, camera id, 2015-04-07, byungsoo.moon@lge.com */
 
 	rc = msm_camera_power_down(power_info, e_ctrl->eeprom_device_type,
 		&e_ctrl->i2c_client);
@@ -1194,6 +1170,20 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		pr_err("failed rc %d\n", rc);
 		goto memdata_free;
 	}
+
+	if (verify_eeprom_checksum(e_ctrl) < 0) {
+	  pr_err("%s: %s : eeprom data checksum failed!\n", __func__,
+		  e_ctrl->eboard_info->eeprom_name);
+	} else {
+	  pr_info("%s: %s : eeprom data checksum success!\n", __func__,
+		  e_ctrl->eboard_info->eeprom_name);
+	}
+	/* LGE_CHANGE_S, camera id, 2015-04-07, byungsoo.moon@lge.com */
+	if (strcmp(e_ctrl->eboard_info->eeprom_name, "imx234_eeprom") == 0) {
+	  main_sensor_id = e_ctrl->cal_data.mapdata[MODULE_VENDOR_ID];
+	  pr_err("%s:main_sensor_id 0x%x\n", __func__, main_sensor_id);
+	}
+	/* LGE_CHANGE_E, camera id, 2015-04-07, byungsoo.moon@lge.com */
 	v4l2_subdev_init(&e_ctrl->msm_sd.sd,
 		e_ctrl->eeprom_v4l2_subdev_ops);
 	v4l2_set_subdevdata(&e_ctrl->msm_sd.sd, e_ctrl);
@@ -1215,7 +1205,7 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 #endif
 
 	e_ctrl->is_supported = (e_ctrl->is_supported << 1) | 1;
-	pr_err("%s X\n", __func__);//LGE for debugging
+	CDBG("%s X\n", __func__);
 	return rc;
 
 power_down:

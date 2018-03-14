@@ -32,6 +32,10 @@
 #include "../inc/fc8080_tun.h"
 #include "../inc/fc8080_regs.h"
 
+#include <linux/device.h>
+#include <soc/qcom/lge/board_lge.h>
+
+#if 0
 #if (FC8080_FREQ_XTAL == 16000)
 #define CLOCK_RATIO 34359738 /* 33554432 * ((float) 1.024) */
 #elif (FC8080_FREQ_XTAL == 16384)
@@ -53,6 +57,9 @@
 #elif (FC8080_FREQ_XTAL == 38400)
 #define CLOCK_RATIO 28631996 /* 33554432 * ((float) 0.8533) */
 #endif
+#endif
+
+extern unsigned int clk_ratio;
 
 struct tuner_i2c_driver {
     fci_s32 (*init)(HANDLE handle, fci_s32 speed, fci_s32 slaveaddr);
@@ -137,8 +144,18 @@ fci_s32 tuner_set_freq(HANDLE handle, fci_u32 freq)
     bbm_word_write(handle, BBM_BUF_ENABLE, buf_en & 0x0ff);
 #endif
 
+#if defined (CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() < HW_REV_0) {
+        clk_ratio = 28631996;
+    } else {
+        clk_ratio = 30403670;
+    }
+#else
+    clk_ratio = 28631996;
+#endif
+
     res = tuner->set_freq(handle, tuner_band, freq);
-    tmp = (fci_u8) (CLOCK_RATIO / freq);
+    tmp = (fci_u8) (clk_ratio / freq);
     bbm_write(handle, BBM_INV_CARRIER_FREQ, tmp);
 
     fc8080_reset(handle);

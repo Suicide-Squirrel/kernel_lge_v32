@@ -316,6 +316,7 @@ void vbus_power_ctrl(unsigned char ON);
 void slimport_initialization(void);
 void sp_tx_clean_state_machine(void);
 unchar sp_tx_cur_states(void);
+unchar sp_tx_get_dp_connection(void);
 void print_sys_state(unchar ss) ;
 unchar slimport_hdcp_cap_check(void);
 unchar sp_tx_cur_cable_type(void);

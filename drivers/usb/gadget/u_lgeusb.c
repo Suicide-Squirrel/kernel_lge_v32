@@ -32,7 +32,7 @@
 
 static struct mutex lgeusb_lock;
 
-#ifdef CONFIG_USB_G_LGE_ANDROID_AUTORUN
+#ifdef CONFIG_LGE_USB_G_AUTORUN
 static u16 user_mode;
 #endif
 
@@ -70,7 +70,7 @@ static char swver_string[32];
 static char subver_string[32];
 static char phoneid_string[32];
 
-#ifdef CONFIG_USB_G_LGE_MULTIPLE_CONFIGURATION
+#ifdef CONFIG_LGE_USB_G_MULTIPLE_CONFIGURATION
 static bool is_mac_os;
 #endif
 
@@ -216,7 +216,7 @@ static ssize_t lgeusb_mode_show(struct device *dev,
 }
 static DEVICE_ATTR(lge_usb_mode, S_IRUGO, lgeusb_mode_show, NULL);
 
-#ifdef CONFIG_USB_G_LGE_ANDROID_AUTORUN
+#ifdef CONFIG_LGE_USB_G_AUTORUN
 /* To set/get USB user mode to/from user space for autorun */
 static ssize_t autorun_user_mode_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -266,7 +266,7 @@ static struct device_attribute *lge_android_usb_attributes[] = {
 	&dev_attr_sw_version,
 	&dev_attr_sub_version,
 	&dev_attr_phone_id,
-#ifdef CONFIG_USB_G_LGE_ANDROID_AUTORUN
+#ifdef CONFIG_LGE_USB_G_AUTORUN
 	&dev_attr_autorun_user_mode,
 #endif
 	NULL
@@ -401,7 +401,7 @@ static struct platform_driver lge_android_usb_platform_driver = {
 	},
 };
 
-#ifdef CONFIG_USB_G_LGE_MULTIPLE_CONFIGURATION
+#ifdef CONFIG_LGE_USB_G_MULTIPLE_CONFIGURATION
 void lgeusb_set_host_os(u16 w_length)
 {
 	switch (w_length) {
@@ -461,28 +461,41 @@ static int lgeusb_probe(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_LGE_DIAG_USB_ACCESS_LOCK
+#ifdef CONFIG_LGE_USB_DIAG_LOCK
 int user_diag_enable = 0;
-
-#if !defined(CONFIG_MACH_MSM8992_P1_SPR_US)
 #define DIAG_ENABLE 1
+
 int get_diag_enable(void)
 {
+#if !defined(CONFIG_LGE_USB_DIAG_LOCK_SPR)
 	if (lge_get_factory_boot())
 		user_diag_enable = DIAG_ENABLE;
-
+#endif
 	return user_diag_enable;
 }
 EXPORT_SYMBOL(get_diag_enable);
-#endif
 
-#ifdef CONFIG_LGE_DIAG_SYNC_STATUS
+#ifdef CONFIG_LGE_USB_DIAG_LOCK_SPR
 int set_diag_enable(int enable)
 {
 	user_diag_enable = enable;
 	return 0;
 }
 EXPORT_SYMBOL(set_diag_enable);
+
+static int __init get_diag_enable_cmdline(char *diag_enable)
+{
+	if(!strcmp(diag_enable,"true")) {
+		user_diag_enable = 1;
+	} else {
+		user_diag_enable = 0;
+	}
+
+	pr_info("[%s] read cmdline value = %d\n", __func__, user_diag_enable);
+
+	return 1;
+}
+__setup("usb.diag_enable=", get_diag_enable_cmdline);
 #endif
 
 static ssize_t read_diag_enable(struct device *dev,
@@ -585,7 +598,7 @@ static int __init lgeusb_init(void)
 	dev->get_factory_cable = NULL;
 #endif
 
-#ifdef CONFIG_LGE_DIAG_USB_ACCESS_LOCK
+#ifdef CONFIG_LGE_USB_DIAG_LOCK
 	platform_driver_register(&lg_diag_cmd_driver);
 #endif
 	return platform_driver_probe(&lge_android_usb_platform_driver,

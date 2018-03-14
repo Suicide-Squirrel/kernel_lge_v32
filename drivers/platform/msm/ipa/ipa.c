@@ -1163,8 +1163,14 @@ int ipa_init_q6_smem(void)
 
 	ipa_inc_client_enable_clks();
 
-	rc = ipa_init_smem_region(IPA_MEM_PART(modem_size),
-		IPA_MEM_PART(modem_ofst));
+	if (ipa_ctx->ipa_hw_type == IPA_HW_v2_0)
+		rc = ipa_init_smem_region(IPA_MEM_PART(modem_size) -
+			IPA_MEM_RAM_MODEM_NETWORK_STATS_SIZE,
+			IPA_MEM_PART(modem_ofst));
+	else
+		rc = ipa_init_smem_region(IPA_MEM_PART(modem_size),
+			IPA_MEM_PART(modem_ofst));
+
 	if (rc) {
 		IPAERR("failed to initialize Modem RAM memory\n");
 		ipa_dec_client_disable_clks();
@@ -1537,14 +1543,9 @@ int ipa_q6_cleanup(void)
 		BUG();
 	}
 
-	/*
-	 * Q6 relies on the AP to reset all Q6 IPA pipes.
-	 * In case the uC is not loaded, or upon any failure in the pipe reset
-	 * sequence, we have to assert.
-	 */
 	if (!ipa_ctx->uc_ctx.uc_loaded) {
-		IPAERR("uC is not loaded, can't reset Q6 pipes\n");
-		BUG();
+		IPAERR("uC is not loaded, won't reset Q6 pipes\n");
+		return 0;
 	}
 
 	for (client_idx = 0; client_idx < IPA_CLIENT_MAX; client_idx++)
@@ -1589,7 +1590,6 @@ int _ipa_init_sram_v2(void)
 	IPA_SRAM_SET(IPA_MEM_PART(v6_rt_ofst), IPA_MEM_CANARY_VAL);
 	IPA_SRAM_SET(IPA_MEM_PART(modem_hdr_ofst), IPA_MEM_CANARY_VAL);
 	IPA_SRAM_SET(IPA_MEM_PART(modem_ofst), IPA_MEM_CANARY_VAL);
-	IPA_SRAM_SET(IPA_MEM_PART(apps_v4_flt_ofst), IPA_MEM_CANARY_VAL);
 	IPA_SRAM_SET(IPA_MEM_PART(uc_info_ofst), IPA_MEM_CANARY_VAL);
 
 	iounmap(ipa_sram_mmio);
@@ -2782,8 +2782,10 @@ static void ipa_sps_process_irq(struct work_struct *work)
 
 	/* process bam irq */
 	ret = sps_bam_process_irq(ipa_ctx->bam_handle);
-	if (ret)
+	if (ret) {
 		IPAERR("sps_process_eot_event failed %d\n", ret);
+		ipa_sps_irq_rx_notify_all();
+	}
 
 	/* release IPA clocks */
 	ipa_sps_process_irq_schedule_rel();
@@ -2890,10 +2892,14 @@ static void sps_event_cb(enum sps_callback_case event, void *param)
 	case SPS_CALLBACK_BAM_RES_REL:
 		ipa_sps_process_irq_schedule_rel();
 		break;
+
+	case SPS_CALLBACK_BAM_POLL:
+		ipa_sps_irq_rx_notify_all();
+		break;
+
 	default:
 		IPADBG("unsupported event %d\n", event);
 	}
-
 	spin_unlock_irqrestore(&ipa_ctx->sps_pm.lock, flags);
 }
 /**

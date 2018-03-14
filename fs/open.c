@@ -44,6 +44,16 @@
 #include "sreadahead_prof.h"
 /* LGE_CHAGE_E */
 
+#ifdef CONFIG_MDFPP_CCAUDIT
+#define ccaudit_permck(error, fname, flags) \
+{ \
+	if (unlikely((error == -EACCES) || (error == -EPERM) || (error == -EROFS))) \
+		if ((flags && (flags & (O_WRONLY | O_RDWR | O_TRUNC | O_APPEND))) || !flags ) \
+                       if(!strstr(fname,"@classes.dex.flock") && !strstr(current->comm,"qmuxd")) \
+                                printk("[CCAudit] %s error=%d file=%s flag=%d proc=%s parent=%s\n", __func__, (int)error, fname /*tmp->name*/, flags, current->comm, current->real_parent->comm); \
+}
+#endif
+
 int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	struct file *filp)
 {
@@ -478,8 +488,12 @@ static int chmod_common(struct path *path, umode_t mode)
 	int error;
 
 	error = mnt_want_write(path->mnt);
-	if (error)
+	if (error){
+#ifdef CONFIG_MDFPP_CCAUDIT
+		ccaudit_permck(error, path->dentry->d_iname, 0);
+#endif
 		return error;
+	}
 	mutex_lock(&inode->i_mutex);
 	error = security_path_chmod(path, mode);
 	if (error)
@@ -490,6 +504,9 @@ static int chmod_common(struct path *path, umode_t mode)
 out_unlock:
 	mutex_unlock(&inode->i_mutex);
 	mnt_drop_write(path->mnt);
+#ifdef CONFIG_MDFPP_CCAUDIT
+	ccaudit_permck(error, path->dentry->d_iname, 0);
+#endif
 	return error;
 }
 
@@ -684,7 +701,6 @@ static int do_dentry_open(struct file *f,
 	}
 
 	f->f_mapping = inode->i_mapping;
-	file_sb_list_add(f, inode->i_sb);
 
 	if (unlikely(f->f_mode & FMODE_PATH)) {
 		f->f_op = &empty_fops;
@@ -719,7 +735,6 @@ static int do_dentry_open(struct file *f,
 
 cleanup_all:
 	fops_put(f->f_op);
-	file_sb_list_del(f);
 	if (f->f_mode & FMODE_WRITE) {
 		if (!special_file(inode->i_mode)) {
 			/*
@@ -939,6 +954,9 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 		if (fd >= 0) {
 			struct file *f = do_filp_open(dfd, tmp, &op, lookup);
 			if (IS_ERR(f)) {
+#ifdef CONFIG_MDFPP_CCAUDIT
+				ccaudit_permck(PTR_ERR(f), tmp->name, flags);
+#endif
 				put_unused_fd(fd);
 				fd = PTR_ERR(f);
 			} else {

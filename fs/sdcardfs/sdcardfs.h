@@ -45,6 +45,9 @@
 #include <linux/ratelimit.h>
 #include "multiuser.h"
 
+/* the file system magic number */
+#define SDCARDFS_SUPER_MAGIC   0xb550ca10
+
 /* the file system name */
 #define SDCARDFS_NAME "sdcardfs"
 
@@ -67,13 +70,28 @@
 #define AID_SDCARD_ALL    1035	/* access all users external storage */
 
 #define AID_PACKAGE_INFO  1027
+#define AID_EVERYBODY     9997
 
-#define fix_derived_permission(x)	\
+#define fix_derived_permission(x, mask)	\
 	do {						\
 		(x)->i_uid = SDCARDFS_I(x)->d_uid;	\
 		(x)->i_gid = SDCARDFS_I(x)->d_gid;	\
-		(x)->i_mode = ((x)->i_mode & S_IFMT) | SDCARDFS_I(x)->d_mode;\
+        SDCARDFS_I(x)->d_mode = 0775 &  ~mask; \
+        if (SDCARDFS_I(x)->perm == PERM_PRE_ROOT) \
+        { \
+            SDCARDFS_I(x)->d_mode = 0711; \
+        } \
+        else if (SDCARDFS_I(x)->d_under_android) \
+        { \
+            if (SDCARDFS_I(x)->d_gid == AID_SDCARD_RW) { \
+                SDCARDFS_I(x)->d_mode = SDCARDFS_I(x)->d_mode & ~0006; \
+            } else { \
+                SDCARDFS_I(x)->d_mode = SDCARDFS_I(x)->d_mode & ~0007; \
+            } \
+        } \
+        (x)->i_mode = ((x)->i_mode & S_IFMT) | SDCARDFS_I(x)->d_mode; \
 	} while (0)
+
 
 /* OVERRIDE_CRED() and REVERT_CRED()
  *	OVERRID_CRED()
@@ -84,13 +102,19 @@
  * These two macro should be used in pair, and OVERRIDE_CRED() should be
  * placed at the beginning of a function, right after variable declaration.
  */
-#define OVERRIDE_CRED(sdcardfs_sbi, saved_cred)		\
-	saved_cred = override_fsids(sdcardfs_sbi);	\
+#define OVERRIDE_CRED(sdcardfs_sbi, saved_cred)	\
+	saved_cred = override_fsids(sdcardfs_sbi->options.fs_low_uid, \
+								sdcardfs_sbi->options.fs_low_gid); \
 	if (!saved_cred) { return -ENOMEM; }
 
 #define OVERRIDE_CRED_PTR(sdcardfs_sbi, saved_cred)	\
-	saved_cred = override_fsids(sdcardfs_sbi);	\
+	saved_cred = override_fsids(sdcardfs_sbi->options.fs_low_uid, \
+								sdcardfs_sbi->options.fs_low_gid); \
 	if (!saved_cred) { return ERR_PTR(-ENOMEM); }
+
+#define OVERRIDE_ROOT_CRED(saved_cred) \
+	saved_cred = override_fsids(0, 0); \
+	if (!saved_cred) { return -ENOMEM; }
 
 #define REVERT_CRED(saved_cred)	revert_fsids(saved_cred)
 
@@ -100,8 +124,6 @@
 		(int)current->cred->fsuid,		\
 		(int)current->cred->fsgid);
 
-/* Android 4.4 support */
-
 /* Permission mode for a specific node. Controls how file permissions
  * are derived for children nodes. */
 typedef enum {
@@ -109,7 +131,7 @@ typedef enum {
 	PERM_INHERIT,
 	/* This node is one level above a normal root; used for legacy layouts
 	 * which use the first level to represent user_id. */
-	PERM_LEGACY_PRE_ROOT,
+    PERM_PRE_ROOT,
 	/* This node is "/" */
 	PERM_ROOT,
 	/* This node is "/Android" */
@@ -118,27 +140,28 @@ typedef enum {
 	PERM_ANDROID_DATA,
 	/* This node is "/Android/obb" */
 	PERM_ANDROID_OBB,
-	/* This node is "/Android/user" */
-	PERM_ANDROID_USER,
+	/* This node is "/Android/media" */
+	PERM_ANDROID_MEDIA,
 } perm_t;
-
-/* Permissions structure to derive */
-typedef enum {
-	DERIVE_NONE,
-	DERIVE_LEGACY,
-	DERIVE_UNIFIED,
-} derive_t;
 
 typedef enum {
 	LOWER_FS_EXT4,
 	LOWER_FS_FAT,
+    LOWER_FS_EXFAT,
 } lower_fs_t;
+
+typedef enum {
+	TYPE_NONE,
+	TYPE_DEFAULT,
+	TYPE_READ,
+	TYPE_WRITE,
+} type_t;
 
 struct sdcardfs_sb_info;
 struct sdcardfs_mount_options;
 
 /* Do not directly use this function. Use OVERRIDE_CRED() instead. */
-const struct cred * override_fsids(struct sdcardfs_sb_info* sbi);
+const struct cred * override_fsids(uid_t fsuid, gid_t fsgid);
 /* Do not directly use this function, use REVERT_CRED() instead. */
 void revert_fsids(const struct cred * old_cred);
 
@@ -163,6 +186,7 @@ extern struct dentry *sdcardfs_lookup(struct inode *dir, struct dentry *dentry,
 				    unsigned int flags);
 extern int sdcardfs_interpose(struct dentry *dentry, struct super_block *sb,
 			    struct path *lower_path);
+extern long sdcardfs_propagate_unlink(struct inode *parent, char* pathname);
 
 /* file private data */
 struct sdcardfs_file_info {
@@ -173,14 +197,12 @@ struct sdcardfs_file_info {
 /* sdcardfs inode data in memory */
 struct sdcardfs_inode_info {
 	struct inode *lower_inode;
-	/* state derived based on current position in hierachy
-	 * caution: d_mode does not include file types
-	 */
 	perm_t perm;
 	userid_t userid;
 	uid_t d_uid;
 	gid_t d_gid;
 	mode_t d_mode;
+    bool d_under_android;
 
 	struct inode vfs_inode;
 };
@@ -195,11 +217,15 @@ struct sdcardfs_dentry_info {
 struct sdcardfs_mount_options {
 	uid_t fs_low_uid;
 	gid_t fs_low_gid;
-	gid_t write_gid;
-	int split_perms;
-	derive_t derive;
+    uid_t userid;
+    gid_t  sdfs_gid;
+    mode_t sdfs_mask;
+    bool multi_user;
+	uid_t owner_user;
 	lower_fs_t lower_fs;
 	unsigned int reserved_mb;
+	char *label;
+	type_t type;
 };
 
 /* sdcardfs super-block data in memory */
@@ -212,6 +238,7 @@ struct sdcardfs_sb_info {
 	char *obbpath_s;
 	struct path obbpath;
 	void *pkgl_id;
+	char *devpath;
 };
 
 /*
@@ -377,20 +404,24 @@ static inline void sdcardfs_put_real_lower(const struct dentry *dent,
 }
 
 /* for packagelist.c */
-extern int get_caller_has_rw_locked(void *pkgl_id, derive_t derive);
 extern appid_t get_appid(void *pkgl_id, const char *app_name);
 extern int check_caller_access_to_name(struct inode *parent_node, const char* name,
-                                        derive_t derive, int w_ok, int has_rw);
+                                        int w_ok);
 extern int open_flags_to_access_mode(int open_flags);
-extern void * packagelist_create(gid_t write_gid);
+extern void * packagelist_create(const char *dev_name, struct super_block *sb);
+extern void packagelist_lock(void *pkgl_id);
+extern void packagelist_unlock(void *pkgl_id);
 extern void packagelist_destroy(void *pkgl_id);
 extern int packagelist_init(void);
 extern void packagelist_exit(void);
 
 /* for derived_perm.c */
 extern void setup_derived_state(struct inode *inode, perm_t perm,
-			userid_t userid, uid_t uid, gid_t gid, mode_t mode);
+            userid_t userid, uid_t uid, gid_t gid, bool under_android);
+extern void setup_derived_state_for_multiuser_gid(struct inode *inode, perm_t perm,
+            userid_t userid, uid_t uid, gid_t gid, bool under_android);
 extern void get_derived_permission(struct dentry *parent, struct dentry *dentry);
+extern void get_derived_permission_recursive(struct dentry *parent);
 extern void update_derived_permission(struct dentry *dentry);
 extern int need_graft_path(struct dentry *dentry);
 extern int is_base_obbpath(struct dentry *dentry);
@@ -514,6 +545,8 @@ out_invalid:
     printk(KERN_INFO "statfs.f_frsize      : %ld\n", statfs.f_frsize);
     printk(KERN_INFO "statfs.f_flags       : %ld\n", statfs.f_flags);
     printk(KERN_INFO "sdcardfs reserved_mb : %u\n", sbi->options.reserved_mb);
+    if (sbi->devpath)
+        printk(KERN_INFO "sdcardfs source path : %s\n", sbi->devpath);
 
 out_nospc:
     printk_ratelimited(KERN_INFO "statfs.f_bavail : %llu blocks / "

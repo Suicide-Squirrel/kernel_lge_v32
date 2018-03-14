@@ -94,4 +94,9 @@ config MMC_FFU
 	  This is an option to run firmware update on eMMC 5.0.
 	  Field firmware updates (FFU) enables features enhancement
 	  in the field.
+config MMC_LGE_UTILS
+    bool "LGE MMC Test utils"
+    default n
+    help
+      This Feature can test various Features of eMMC.
 

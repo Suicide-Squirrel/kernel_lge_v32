@@ -346,7 +346,7 @@
 			label = "pmx_wlan_enable";
 			/* default state */
 			pmx_wlan_enable_default: default {
-				drive-strength = <8>;
+				drive-strength = <2>;
 				bias-pull-down;
 			};
 		};
@@ -358,7 +358,7 @@
 			label = "pmx_wlan_hostwake";
 			/* default state */
 			pmx_wlan_hostwake_default: default {
-				drive-strength = <8>;
+				drive-strength = <2>;
 				bias-pull-down;
 				input-debounce = <0>;
 			};
@@ -850,6 +850,18 @@
 			trigout_c: trigout_c {
 				drive-strength = <2>;
 				bias-disable;
+			};
+		};
+
+		wcd9xxx_intr {
+			qcom,pins = <&gp 72>;
+			qcom,num-grp-pins = <1>;
+			qcom,pin-func = <0>;
+			label = "wcd-intr-default";
+			wcd_intr_default: default {
+				drive-strength = <2>; /* 2 MA */
+				bias-pull-down; /* pull down */
+				input-enable;
 			};
 		};
 
@@ -1473,18 +1485,5 @@
 						bias-pull-up;
 			 };
 		};
-
-		wcd9xxx_intr {
-			qcom,pins = <&gp 72>;
-			qcom,num-grp-pins = <1>;
-			qcom,pin-func = <0>;
-			label = "wcd-intr-default";
-			wcd_intr_default: default {
-				drive-strength = <2>; /* 2 MA */
-				bias-pull-down; /* pull down */
-				input-enable;
-			};
-		};
-
 	};
 };

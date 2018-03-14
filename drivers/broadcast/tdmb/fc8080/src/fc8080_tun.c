@@ -37,6 +37,11 @@
 #include "../inc/fci_hal.h"
 #include "../inc/fc8080_regs.h"
 
+#include <linux/device.h>
+#include <soc/qcom/lge/board_lge.h>
+
+extern unsigned int freq_xtal;
+
 static fci_s32 fc8080_write(HANDLE handle, fci_u8 addr, fci_u8 data)
 {
     fci_s32 res;
@@ -78,7 +83,7 @@ static fci_s32 fc8080_bb_read(HANDLE handle, fci_u16 addr, fci_u8 *data)
 static fci_s32 fc8080_set_filter(HANDLE handle)
 {
     fci_u8 cal = 0;
-    fci_u32 tcxo = FC8080_FREQ_XTAL * 1000;
+    fci_u32 tcxo = freq_xtal * 1000;
     fci_u32 csfbw = 780000;
 
     cal = (unsigned int) (tcxo * 78 * 2 / csfbw) / 100;
@@ -99,6 +104,16 @@ fci_s32 fc8080_tuner_init(HANDLE handle, fci_u32 band)
 
     fci_u8 rfagc_pd2[6], rfagc_pd2_avg, rfagc_pd2_max, rfagc_pd2_min;
     fci_u8 rfagc_pd1[6], rfagc_pd1_avg, rfagc_pd1_max, rfagc_pd1_min;
+
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() < HW_REV_A) {
+        freq_xtal = 19200;
+    } else {
+        freq_xtal = 27120;
+    }
+#else
+    freq_xtal = 19200;
+#endif
 
     fc8080_write(handle, 0x00, 0x00);
     fc8080_write(handle, 0x02, 0x11);
@@ -214,25 +229,30 @@ fci_s32 fc8080_tuner_init(HANDLE handle, fci_u32 band)
 
     fc8080_write(handle, 0xd0, 0x00);
 
-#if (FC8080_FREQ_XTAL == 16384)
+if (freq_xtal == 16384) {
     fc8080_write(handle, 0xd2, 0x18);
     fc8080_write(handle, 0xd4, 0x2a);
-#elif (FC8080_FREQ_XTAL == 19200)
+}
+else if (freq_xtal == 19200) {
     fc8080_write(handle, 0xd2, 0x1d);
     fc8080_write(handle, 0xd4, 0x33);
-#elif (FC8080_FREQ_XTAL == 24000)
+}
+else if (freq_xtal == 24000) {
     fc8080_write(handle, 0xd2, 0x28);
     fc8080_write(handle, 0xd4, 0x44);
-#elif (FC8080_FREQ_XTAL == 24576)
+}
+else if (freq_xtal == 24576) {
     fc8080_write(handle, 0xd2, 0x28);
     fc8080_write(handle, 0xd4, 0x44);
-#elif (FC8080_FREQ_XTAL == 27120)
+}
+else if (freq_xtal == 27120) {
     fc8080_write(handle, 0xd2, 0x2d);
     fc8080_write(handle, 0xd4, 0x4c);
-#elif (FC8080_FREQ_XTAL == 38400)
+}
+else if (freq_xtal == 38400) {
     fc8080_write(handle, 0xd2, 0x44);
     fc8080_write(handle, 0xd4, 0x6f);
-#endif
+}
 
     fc8080_write(handle, 0xae, 0x36);
     fc8080_write(handle, 0xad, 0x8b);
@@ -273,12 +293,12 @@ fci_s32 fc8080_set_freq(HANDLE handle, fci_u32 band, fci_u32 freq)
         f_vco = freq * div_ratio;
     }
 
-    if (f_vco < FC8080_FREQ_XTAL * 35)
+    if (f_vco < freq_xtal * 35)
         r_val = 2;
     else
         r_val = 1;
 
-    f_comp = FC8080_FREQ_XTAL / r_val;
+    f_comp = freq_xtal / r_val;
 
     n_val = f_vco / f_comp;
     f_diff = f_vco - f_comp * n_val;

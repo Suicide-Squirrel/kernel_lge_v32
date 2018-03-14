@@ -18,6 +18,7 @@
 #define CSI_DECODE_DPCM_10_8_10 5
 #define MAX_CID                 16
 #define I2C_SEQ_REG_DATA_MAX    256
+#define I2C_REG_DATA_MAX       (8*1024)
 
 #define MAX_ACTUATOR_REG_TBL_SIZE 8
 #define MAX_ACTUATOR_REGION       5
@@ -91,6 +92,9 @@ enum msm_sensor_power_seq_gpio_t {
 /* LGE_CHANGE_S, Add gpio to control LDO*/
     SENSOR_GPIO_LDAF_EN,
     SENSOR_GPIO_OIS_RESET,
+    SENSOR_GPIO_MH1_RESET,
+	SENSOR_GPIO_MH1_LDO_EN,
+	SENSOR_GPIO_MH1_DCDC_EN,
  /* LGE_CHANGE_E, Add gpio to control LDO*/
 	SENSOR_GPIO_FL_EN,
 	SENSOR_GPIO_FL_NOW,
@@ -107,6 +111,9 @@ enum msm_camera_vreg_name_t {
 	CAM_VAF,
 /* LGE_CHANGE_S, Add OISVDD*/
     CAM_OISVDD,
+    MH1_VIO,
+	MH1_VDDE12,
+	GYRO_VDD,
     CAM_OISDVDD,
 /* LGE_CHANGE_E, Add OISVDD*/
 	CAM_V_CUSTOM1,
@@ -319,6 +326,7 @@ struct region_params_t {
 	int macro_dac;
 	int dac_20;
 	int dac_40;
+	int macro_mecha_end;
 	/* LGE_CHANGE_E*/
 };
 

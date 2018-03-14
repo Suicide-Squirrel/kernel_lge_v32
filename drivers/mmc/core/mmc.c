@@ -64,7 +64,15 @@ static const struct mmc_fixup mmc_fixups[] = {
 	/* Disable HPI feature for Kingstone card */
 	MMC_FIXUP_EXT_CSD_REV("MMC16G", CID_MANFID_KINGSTON, CID_OEMID_ANY,
 			add_quirk, MMC_QUIRK_BROKEN_HPI, 5),
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+    /* SanDisk cards support CMDQ mode */
+    MMC_FIXUP(CID_NAME_ANY, CID_MANFID_SANDISK, CID_OEMID_ANY,
+            add_quirk_mmc, MMC_QUIRK_INAND_CAN_DO_CMDQ),
 
+	/* SanDisk cards support Hybrid mode */
+	MMC_FIXUP(CID_NAME_ANY, CID_MANFID_SANDISK, CID_OEMID_ANY,
+		  add_quirk_mmc, MMC_QUIRK_INAND_HYBRID_MODE),
+#endif
 	MMC_FIXUP(CID_NAME_ANY, CID_MANFID_NUMONYX_MICRON, CID_OEMID_ANY,
 		add_quirk_mmc, MMC_QUIRK_CACHE_DISABLE),
 	MMC_FIXUP("MMC16G", CID_MANFID_KINGSTON, CID_OEMID_ANY, add_quirk_mmc,
@@ -594,6 +602,25 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 		card->ext_csd.data_sector_size = 512;
 	}
 
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+	if (card->ext_csd.rev >= 8) {
+		/* check CQ capability */
+		if (ext_csd[EXT_CSD_CMDQ_SUPPORT] &&
+                ext_csd[EXT_CSD_CMDQ_DEPTH] &&
+                (card->quirks & MMC_QUIRK_INAND_CAN_DO_CMDQ)) {
+			card->ext_csd.cmdq_support =
+				ext_csd[EXT_CSD_CMDQ_SUPPORT];
+			card->ext_csd.cmdq_depth = ext_csd[EXT_CSD_CMDQ_DEPTH];
+			if (card->ext_csd.cmdq_depth <= 2) {
+				card->ext_csd.cmdq_support = 0;
+				card->ext_csd.cmdq_depth = 0;
+			}
+		}
+		pr_info("[%s]cmdq_depth = %d , cmdq_support = %d\n", __func__,
+				card->ext_csd.cmdq_depth, card->ext_csd.cmdq_support);
+	}
+#endif
+
 out:
 	return err;
 }
@@ -698,6 +725,60 @@ MMC_DEV_ATTR(enhanced_area_offset, "%llu\n",
 MMC_DEV_ATTR(enhanced_area_size, "%u\n", card->ext_csd.enhanced_area_size);
 MMC_DEV_ATTR(raw_rpmb_size_mult, "%#x\n", card->ext_csd.raw_rpmb_size_mult);
 MMC_DEV_ATTR(rel_sectors, "%#x\n", card->ext_csd.rel_sectors);
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+MMC_DEV_ATTR(cmdq_en, "%#x\n", card->ext_csd.cmdq_en);
+
+static ssize_t mmc_slw_width_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+
+{
+	struct mmc_card *card = mmc_dev_to_card(dev);
+	unsigned long slw_width;
+	int err;
+
+	if (kstrtoul(buf, 0, &slw_width))
+		return -EINVAL;
+
+	card = mmc_dev_to_card(dev);
+	if (!card)
+		return -EINVAL;
+
+	if (kstrtoul(buf, 0, &slw_width))
+		return -EINVAL;
+
+
+	if (slw_width_get(&card->slw) != (u32)slw_width) {
+		err = slw_resize(&card->slw, (u32)slw_width);
+		if (err)
+			return err;
+	}
+
+	return count;
+}
+
+MMC_DEV_ATTR_RW(slw_width, mmc_slw_width_store, "%u\n",
+			slw_width_get(&card->slw));
+static ssize_t mmc_slw_write_th_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+
+{
+	struct mmc_card *card = mmc_dev_to_card(dev);
+	unsigned long write_th;
+
+	/* write_th percentage permitted value range: 0 <= write_th <= 100 */
+	if (kstrtoul(buf, 0, &write_th) || write_th > 100)
+		return -EINVAL;
+
+	card = mmc_dev_to_card(dev);
+	if (!card)
+		return -EINVAL;
+
+	card->slw_write_th = (u32)write_th;
+	return count;
+}
+MMC_DEV_ATTR_RW(slw_write_th, mmc_slw_write_th_store, "%u\n",
+		card->slw_write_th);
+#endif
 
 static struct attribute *mmc_std_attrs[] = {
 	&dev_attr_cid.attr,
@@ -716,6 +797,11 @@ static struct attribute *mmc_std_attrs[] = {
 	&dev_attr_enhanced_area_size.attr,
 	&dev_attr_raw_rpmb_size_mult.attr,
 	&dev_attr_rel_sectors.attr,
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+	&dev_attr_cmdq_en.attr,
+	&dev_attr_slw_width.attr,
+	&dev_attr_slw_write_th.attr,
+#endif
 	NULL,
 };
 
@@ -1464,18 +1550,13 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 					mmc_hostname(host), __func__, err);
 			goto free_card;
 		}
-#ifndef CONFIG_MACH_LGE
-		/* LGE_CHANGE
-		 *  ext_csd.rev value are required while decoding cid.year, so move down.
-		 *  2014-09-01, Z2G4-BSP-FileSys@lge.com
-		 */
+
 		err = mmc_decode_cid(card);
 		if (err) {
 			pr_err("%s: %s: mmc_decode_cid() fails %d\n",
 					mmc_hostname(host), __func__, err);
 			goto free_card;
 		}
-#endif
 	}
 
 	/*
@@ -1508,18 +1589,6 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 					mmc_hostname(host), __func__, err);
 			goto free_card;
 		}
-#ifdef CONFIG_MACH_LGE
-		/* LGE_CHANGE
-		 * decode cid here.
-		 * 2014-09-01, Z2G4-BSP-FileSys@lge.com
-		 */
-		err = mmc_decode_cid(card);
-		if (err) {
-			pr_err("%s: %s: mmc_decode_cid() fails %d\n",
-					mmc_hostname(host), __func__, err);
-			goto free_card;
-		}
-#endif
 
 		/* If doing byte addressing, check if required to do sector
 		 * addressing.  Handle the case of <2GB cards needing sector
@@ -1590,11 +1659,9 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 	}
 
 	/*
-	 * If the host supports the power_off_notify capability then
-	 * set the notification byte in the ext_csd register of device
+	 * Enable power_off_notification byte in the ext_csd register
 	 */
-	if ((host->caps2 & MMC_CAP2_POWEROFF_NOTIFY) &&
-	    (card->ext_csd.rev >= 6)) {
+	if (card->ext_csd.rev >= 6) {
 		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
 				 EXT_CSD_POWER_OFF_NOTIFICATION,
 				 EXT_CSD_POWER_ON,
@@ -1698,8 +1765,48 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		} else {
 			card->ext_csd.packed_event_en = 1;
 		}
-
 	}
+
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+	/*
+	 * enable Command queue if supported
+	 */
+	if (card->ext_csd.cmdq_support &&
+			(host->caps2 & MMC_CAP2_CAN_DO_CMDQ)) {
+		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+				EXT_CSD_CMDQ_MODE_EN,
+				EXT_CSD_CMDQ_MODE_ON,
+				card->ext_csd.generic_cmd6_time);
+		if (err && err != -EBADMSG)
+			goto free_card;
+		if (err) {
+			pr_warn("%s: Enabling CMDQ failed\n",
+					mmc_hostname(card->host));
+			card->ext_csd.cmdq_en = 0;
+			card->ext_csd.cmdq_depth = 0;
+			err = 0;
+		} else
+			card->ext_csd.cmdq_en = 1;
+	}
+		/*
+		 * Enable Hybrid mode if supported
+		 */
+		if ((host->caps2 & MMC_CAP2_HYBRID_MODE) &&
+		    (card->quirks & MMC_QUIRK_INAND_HYBRID_MODE) &&
+		    card->ext_csd.packed_event_en && card->ext_csd.cmdq_en) {
+			card->hybrid_mode_support = 1;
+
+			if (oldcard) {
+				slw_reset(&card->slw);
+			} else	{
+				err = slw_init(&card->slw, MMC_SLW_WIDTH);
+				if (err)
+					goto free_card;
+
+				card->slw_write_th = MMC_SLW_WRITE_TH;
+			}
+		}
+#endif
 
 	if (!oldcard) {
 		if ((host->caps2 & MMC_CAP2_PACKED_CMD) &&
@@ -1736,6 +1843,10 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 				card->bkops_info.delay_ms =
 					card->bkops_info.host_delay_ms;
 		}
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+		pr_debug("%s: SanDisk Version %.2d.%.2d", mmc_hostname(host),
+			6, 5);
+#endif
 	}
 
 	return 0;
@@ -1857,10 +1968,7 @@ static void mmc_detect(struct mmc_host *host)
 	}
 }
 
-/*
- * Suspend callback from host.
- */
-static int mmc_suspend(struct mmc_host *host)
+static int _mmc_suspend(struct mmc_host *host, bool is_suspend)
 {
 	int err = 0;
 
@@ -1876,7 +1984,7 @@ static int mmc_suspend(struct mmc_host *host)
 	 */
 	mmc_disable_clk_scaling(host);
 
-	err = mmc_cache_ctrl(host, 0);
+	err = mmc_flush_cache(host->card);
 	if (err)
 		goto out;
 
@@ -1889,6 +1997,14 @@ static int mmc_suspend(struct mmc_host *host)
 out:
 	mmc_release_host(host);
 	return err;
+}
+
+/*
+ * Suspend callback from host.
+ */
+static int mmc_suspend(struct mmc_host *host)
+{
+	return _mmc_suspend(host, true);
 }
 
 /*

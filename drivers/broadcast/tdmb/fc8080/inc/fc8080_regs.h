@@ -39,7 +39,7 @@ extern "C" {
     /* X-TAL Frequency Configuration */
 /*#define FC8080_FREQ_XTAL  16000*/
 /*#define FC8080_FREQ_XTAL  16384*/
-#define FC8080_FREQ_XTAL    19200 // 19.2MHz
+//#define FC8080_FREQ_XTAL  19200 // 19.2MHz
 //#define FC8080_FREQ_XTAL  24576
 /*#define FC8080_FREQ_XTAL  24000*/
 /*#define FC8080_FREQ_XTAL  24576*/

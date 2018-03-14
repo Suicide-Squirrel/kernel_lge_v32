@@ -61,6 +61,9 @@
 /* LGE_CHANGE_S, tcs, 2015-01-14, booil.park@lge.com */
 #define MSM_CAMERA_SUBDEV_TCS        18
 /* LGE_CHANGE_E, tcs, 2015-01-14, booil.park@lge.com */
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+#define MSM_CAMERA_SUBDEV_MH1      19
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.jeon@lge.com */
 
 #define MSM_MAX_CAMERA_SENSORS  5
 
@@ -95,7 +98,9 @@
 #define MSM_CAMERA_MAPPING_CFG  (MSM_CAMERA_EVENT_MIN + 5)
 #define MSM_CAMERA_MAPPING_SES  (MSM_CAMERA_EVENT_MIN + 6)
 #define MSM_CAMERA_MSM_NOTIFY   (MSM_CAMERA_EVENT_MIN + 7)
-#define MSM_CAMERA_EVENT_MAX    (MSM_CAMERA_EVENT_MIN + 8)
+/*LGE_CHANGE, cst, added shutdown event*/
+#define MSM_CAMERA_SHUTDOWN     (MSM_CAMERA_EVENT_MIN + 8)
+#define MSM_CAMERA_EVENT_MAX    (MSM_CAMERA_EVENT_MIN + 9)
 
 /* data.command */
 #define MSM_CAMERA_PRIV_S_CROP		 (V4L2_CID_PRIVATE_BASE + 1)
@@ -121,6 +126,7 @@
 #define MSM_CAMERA_ERR_EVT_BASE 0x00010000
 #define MSM_CAMERA_ERR_CMD_FAIL (MSM_CAMERA_ERR_EVT_BASE + 1)
 #define MSM_CAMERA_ERR_MAPPING  (MSM_CAMERA_ERR_EVT_BASE + 2)
+#define MSM_CAMERA_ERR_DEVICE_BUSY  (MSM_CAMERA_ERR_EVT_BASE + 3)
 
 /* The msm_v4l2_event_data structure should match the
  * v4l2_event.u.data field.

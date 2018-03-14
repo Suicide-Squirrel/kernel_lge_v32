@@ -24,5 +24,8 @@
 
 //ADD HERE TO SUPPORT HW CHANGE
 
-
-
+&soc {
+	earjack-debugger {
+		status = "ok";
+	};
+};

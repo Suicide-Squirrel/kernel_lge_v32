@@ -346,6 +346,13 @@ config SND_SOC_MDM9640
 	 interfaces with DSP, also it will enable
 	 the machine drivers and the corresponding
 	 DAI-links.
+
+config SND_USE_TERT_MI2S
+	bool "USE TERT MI2S PORT"
+	default n
+	help
+	To support QCT TERT MI2S PORT as amp interfase
+
 config SND_USE_QUAT_MI2S
         bool "USE QUAT MI2S PORT"
         default n
@@ -393,5 +400,24 @@ config SND_LGE_HIDDEN_AUX
         default n
         help
         apply hidden aux scenario (no icon and device routing)
+
+
+config SND_SOC_HPH_WA
+        bool "CONFIG_SND_SOC_HPH_WA"
+        default n
+        help
+        To detecting mbhc ear-jack detecting by MB trigger
+
+config SND_EAR_MIC_SWITCH
+        bool "CONFIG_SND_EAR_MIC_SWITCH"
+        default n
+        help
+        Adjusts the switch of EAR_MIC_JACK and EAR_MIC_JACK_OUT
+
+config SND_LGE_VOC_CONF
+        bool "LGE VOC CONFIG"
+        default n
+        help
+         To get response of network id and sample_rate for voice calibration
 
 endmenu

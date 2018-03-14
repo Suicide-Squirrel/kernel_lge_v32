@@ -24,11 +24,15 @@
 *******************************************************************************/
 #include <linux/input.h>
 #include <linux/spi/spi.h>
-
+#include <linux/gpio.h>
 #include "../inc/broadcast_fc8080.h"
 #include "../inc/fci_types.h"
 #include "../inc/fc8080_regs.h"
 #include "../inc/fci_oal.h"
+
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+#include <soc/qcom/lge/board_lge.h>
+#endif
 
 #define SPI_BMODE       0x00
 #define SPI_WMODE       0x04
@@ -57,7 +61,9 @@ static fci_u8 rdata_buf[8196] = {0};
 
 static DEFINE_MUTEX(lock);
 extern struct spi_device *tdmb_fc8080_get_spi_device(void);
-
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+extern void Spi_Cs_Configuration(int number);
+#endif
 int fc8080_spi_write_then_read(
     struct spi_device *spi
     , fci_u8 *txbuf
@@ -69,6 +75,12 @@ int fc8080_spi_write_then_read(
 
     struct spi_message message;
     struct spi_transfer    x;
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() >= HW_REV_0)
+	{
+        Spi_Cs_Configuration(1);
+	}
+#endif
 
     spi_message_init(&message);
     memset(&x, 0, sizeof x);
@@ -85,6 +97,13 @@ int fc8080_spi_write_then_read(
 
     memcpy(rxbuf, x.rx_buf + tx_length, rx_length);
 
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() >= HW_REV_0)
+	{
+        Spi_Cs_Configuration(4);
+	}
+#endif
+
     return res;
 }
 
@@ -100,6 +119,13 @@ int fc8080_spi_write_then_read_burst(
     struct spi_message    message;
     struct spi_transfer    x;
 
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() >= HW_REV_0)
+	{
+        Spi_Cs_Configuration(1);
+    }
+#endif
+
     spi_message_init(&message);
     memset(&x, 0, sizeof x);
 
@@ -110,6 +136,13 @@ int fc8080_spi_write_then_read_burst(
     x.len = tx_length + rx_length;
 
     res = spi_sync(spi, &message);
+
+#if defined(CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() >= HW_REV_0)
+	{
+        Spi_Cs_Configuration(4);
+	}
+#endif
 
     return res;
 }

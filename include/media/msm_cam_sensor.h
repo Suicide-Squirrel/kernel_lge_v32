@@ -38,6 +38,12 @@
 #define MAX_TCS_REG_SETTINGS 800
 /* LGE_CHANGE_E, tcs, 2015-01-14, booil.park@lge.com */
 
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+#define MAX_MH1_MOD_NAME_SIZE 32
+#define MAX_MH1_NAME_SIZE 32
+#define MAX_MH1_REG_SETTINGS 800
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.jeon@lge.com */
+
 #define MOVE_NEAR 0
 #define MOVE_FAR  1
 
@@ -102,6 +108,9 @@ enum sensor_sub_module_t {
 /* LGE_CHANGE_S, tcs, 2015-01-14, booil.park@lge.com */
 	SUB_MODULE_TCS,
 /* LGE_CHANGE_E, tcs, 2015-01-14, booil.park@lge.com */
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+	SUB_MODULE_MH1,
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
 	SUB_MODULE_MAX,
 };
 
@@ -442,6 +451,9 @@ enum msm_sensor_cfg_type_t {
 	CFG_SET_AUTOFOCUS,
 	CFG_CANCEL_AUTOFOCUS,
 	CFG_SET_STREAM_TYPE,
+	CFG_GET_SENSER_TEMPERATURE, /* LGE_CHANGE, get sensor temperature, 2015-07-20, byungsoo.moon@lge.com */
+	CFG_SET_PREVIEW_TUNE_ON,        /* LGE_CHANGE, LGE Preview tunning for lowlight , 2015-12-28, soojong.jin@lge.com */
+	CFG_SET_PREVIEW_TUNE_OFF,         /* LGE_CHANGE, LGE Preview tunning for lowlight , 2015-12-28, soojong.jin@lge.com */
 };
 
 enum msm_actuator_cfg_type_t {
@@ -501,6 +513,19 @@ enum msm_tcs_cfg_type_t {
 };
 /* LGE_CHANGE_E, tcs, 2015-01-14, booil.park@lge.com */
 
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+enum msm_mh1_cfg_type_t {
+	CFG_MH1_INIT,
+	CFG_MH1_SET_CURRENT_RES,
+	CFG_MH1_SENSOR_MODE,
+	CFG_MH1_HDR_MODE,
+    CFG_MH1_AEC_UPDATE,
+    CFG_MH1_AWB_UPDATE,
+    CFG_MH1_SENSOR_EXP_GAIN,
+	CFG_MH1_SET_SHADING_TBL,
+};
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.jeon@lge.com */
+
 enum msm_ois_i2c_operation {
 	MSM_OIS_WRITE = 0,
 	MSM_OIS_POLL,
@@ -554,6 +579,25 @@ struct msm_tcs_info_t{
 	uint32_t extra2;
 };
 /* LGE_CHANGE_E, tcs, 2015-01-22, booil.park@lge.com */
+
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+struct msm_mh1_awb_info_t {
+  uint16_t awb_gain_r;
+  uint16_t awb_gain_b;
+  uint16_t awb_cct;
+};
+
+struct msm_mh1_exp_info_t {
+  uint32_t exp_time;
+  uint32_t gain;
+  uint16_t lux_index;
+  uint16_t flash_rate;
+};
+
+struct msm_mh1_info_t{
+	void *setting;
+};
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.joen@lge.com */
 
 struct msm_actuator_move_params_t {
 	int8_t dir;
@@ -649,6 +693,19 @@ struct msm_tcs_cfg_data {
 } cfg;
 };
 /* LGE_CHANGE_E, tcs, 2015-01-14, booil.park@lge.com */
+
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+struct msm_mh1_cfg_data {
+	int cfgtype;
+	union {
+		struct msm_mh1_info_t set_info;
+        uint8_t hdr_mode;
+        uint8_t sensor_mode;
+		uint8_t cur_res;
+        unsigned short *shading_tbl;
+} cfg;
+};
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.jeon@lge.com */
 
 struct msm_actuator_set_position_t {
 	uint16_t number_of_steps;
@@ -761,6 +818,11 @@ struct sensor_init_cfg_data {
 #define VIDIOC_MSM_TCS_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 14, struct msm_tcs_cfg_data)
 /*LGE_CHANGE_E, tcs, 2015-01-14, booil.park@lge.com*/
+
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+#define VIDIOC_MSM_MH1_CFG \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_mh1_cfg_data)
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.jeon@lge.com */
 
 #ifdef CONFIG_COMPAT
 struct msm_camera_i2c_reg_setting32 {
@@ -923,6 +985,23 @@ struct msm_tcs_cfg_data32 {
 };
 /* LGE_CHANGE_E, tcs, 2015-01-22, booil.park@lge.com */
 
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+struct msm_mh1_info_t32{
+    compat_uptr_t setting;
+};
+
+struct msm_mh1_cfg_data32 {
+	int cfgtype;
+	union {
+		struct msm_mh1_info_t32 set_info;
+        uint8_t hdr_mode;
+        uint8_t sensor_mode;
+		uint8_t cur_res;
+		compat_uptr_t shading_tbl;
+} cfg;
+};
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.jeon@lge.com */
+
 #define VIDIOC_MSM_ACTUATOR_CFG32 \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 6, struct msm_actuator_cfg_data32)
 
@@ -954,6 +1033,11 @@ struct msm_tcs_cfg_data32 {
 #define VIDIOC_MSM_TCS_CFG32 \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 14, struct msm_tcs_cfg_data32)
 /* LGE_CHANGE_E, tcs, 2015-01-14, booil.park@lge.com */
+
+/* LGE_CHANGE_S, mh1, 2015-05-18, yt.jeon@lge.com */
+#define VIDIOC_MSM_MH1_CFG32 \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_mh1_cfg_data32)
+/* LGE_CHANGE_E, mh1, 2015-05-18, yt.jeon@lge.com */
 
 #endif
 

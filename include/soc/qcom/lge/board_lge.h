@@ -32,6 +32,10 @@ struct lcd_platform_data {
 void __init lge_add_lcd_misc_devices(void);
 #endif
 
+#if IS_ENABLED(CONFIG_LGE_MIPI_PP_INCELL_QHD_CMD_PANEL)
+int lge_get_lgd_sic4945_rev(void);
+#endif
+
 #ifdef CONFIG_LGE_PM_FACTORY_PSEUDO_BATTERY
 struct pseudo_batt_info_type {
 	int mode;
@@ -123,6 +127,7 @@ static inline void gpio_debug_print(void) { return; }
 char* lge_get_dsv_vendor(void);
 int lge_get_panel(void);
 void lge_set_panel(int);
+int lge_get_rsp_nvm(void);
 #if defined(CONFIG_MACH_MSM8992_P1_CN) || defined(CONFIG_MACH_MSM8992_P1_GLOBAL_COM)
 int lge_get_sim_type(void);
 #endif
@@ -131,6 +136,7 @@ int lge_get_lk_panel_status(void);
 
 #if defined(CONFIG_PRE_SELF_DIAGNOSIS)
 int lge_pre_self_diagnosis(char *drv_bus_code, int func_code, char *dev_code, char *drv_code, int errno);
+int lge_pre_self_diagnosis_pass(char *dev_code);
 #endif
 #if defined(CONFIG_CHECK_CPU)
 int lge_fac_check_cpu(char *drv_bus_code, int func_code, char *dev_code, char *drv_code, int errno);

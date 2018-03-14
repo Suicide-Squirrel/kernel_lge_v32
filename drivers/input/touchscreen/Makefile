@@ -88,6 +88,10 @@ obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI4) += DS5/
 obj-$(CONFIG_TOUCHSCREEN_GT9XX)		+= gt9xx/
 obj-$(CONFIG_TOUCHSCREEN_BU21150)	+= bu21150.o
 obj-$(CONFIG_INPUT_MT_WRAPPER)		+= input_mt_wrapper.o
-obj-$(CONFIG_TOUCHSCREEN_LGE_SIC) += lge_touch_core.o
-obj-$(CONFIG_TOUCHSCREEN_LGE_SIC) += touch_sic.o
-obj-$(CONFIG_TOUCHSCREEN_LGE_SIC) += touch_sic_abt.o
+obj-$(CONFIG_TOUCHSCREEN_LGE_SIC)	+= lge_touch_core.o
+obj-$(CONFIG_TOUCHSCREEN_LGE_SIC)	+= touch_sic.o
+obj-$(CONFIG_TOUCHSCREEN_LGE_SIC)	+= touch_sic_abt.o
+obj-$(CONFIG_TOUCHSCREEN_LGE_SIC_SPI)	+= pplus/
+
+obj-$(CONFIG_LGE_TOUCH_CORE)        += lge/
+obj-$(CONFIG_LGE_TOUCH_CORE_MTK)    += lge/

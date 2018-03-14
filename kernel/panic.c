@@ -28,6 +28,8 @@
 
 #ifdef CONFIG_LGE_HANDLE_PANIC
 #include <soc/qcom/lge/lge_handle_panic.h>
+#include <linux/console.h>
+extern int is_console_suspended(void);
 #endif
 
 #define PANIC_TIMER_STEP 100
@@ -114,6 +116,12 @@ void panic(const char *fmt, ...)
 		panic_smp_self_stop();
 
 	console_verbose();
+#ifdef CONFIG_LGE_HANDLE_PANIC
+	printk(KERN_EMERG "panic in suspend: %d\n",is_console_suspended());
+	if(is_console_suspended())
+		resume_console();
+
+#endif
 	bust_spinlocks(1);
 	va_start(args, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, args);

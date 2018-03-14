@@ -22,6 +22,9 @@
 #if defined(CONFIG_BATTERY_MAX17048)
 #include <linux/power/max17048_battery.h>
 #endif
+#if defined(CONFIG_BATTERY_MAX17050)
+#include <linux/power/max17050_battery.h>
+#endif
 #ifdef CONFIG_LGE_PM_UNIFIED_WLC
 #include <linux/power/unified_wireless_charger.h>
 #endif
@@ -73,17 +76,28 @@
 #define CHARGER_CONTR_VOLTAGE_4_1V		4100
 #define CHARGER_CONTR_VOLTAGE_3_7V		3700
 
-#define WIRE_OTP_LIMIT			500
-#define WIRE_IUSB_NORMAL		900
-#define WIRE_IUSB_THERMAL_1		700
-#define WIRE_IUSB_THERMAL_2		500
-#define WIRE_IBAT_THERMAL_1		1000
-#define WIRE_IBAT_THERMAL_2		700
+#define WLC_OTP_LIMIT			500
+#if defined(CONFIG_MACH_MSM8992_PPLUS)
+#define WLC_IUSB_NORMAL		700
+#define WLC_IUSB_THERMAL_1		600
+#define WLC_IUSB_THERMAL_2		500
+#define WLC_IBAT_THERMAL_1		1000
+#define WLC_IBAT_THERMAL_2		700
+#else
+#define WLC_IUSB_NORMAL		900
+#define WLC_IUSB_THERMAL_1		700
+#define WLC_IUSB_THERMAL_2		500
+#define WLC_IBAT_THERMAL_1		1000
+#define WLC_IBAT_THERMAL_2		700
+#endif
 
 #define USB_PSY_NAME "usb"
 #define BATT_PSY_NAME "battery"
 #define FUELGAUGE_PSY_NAME "fuelgauge"
 #define WIRELESS_PSY_NAME "dc"
+#ifdef CONFIG_LGE_PM_UNIFIED_WLC
+#define UNIFIED_WIRELESS_PSY_NAME "wireless"
+#endif
 #define CC_PSY_NAME	"charger_controller"
 #ifdef CONFIG_LGE_PM_BATTERY_ID_CHECKER
 #define BATT_ID_PSY_NAME "battery_id"
@@ -91,6 +105,13 @@
 
 #define DEFAULT_BATT_TEMP               20
 #define DEFAULT_BATT_VOLT               3999
+
+#if defined(CONFIG_LGE_PM_QC20_SCENARIO) && defined(CONFIG_MACH_MSM8992_PPLUS)
+#define QC20_BATTERY_VOLTAGE_THR   4300
+#define QC20_BATTERY_VOLTAGE_THR_LOW	4150
+#define QC20_BATTERY_CURRENT_LIMIT 2100
+#define QC20_IBAT_LIMIT_POLL_TIME  1000*60
+#endif
 
 enum print_reason {
 	PR_DEBUG        = BIT(0),
@@ -136,6 +157,21 @@ module_param_named(
 		__rc;\
 	})
 
+#ifdef CONFIG_LGE_PM_UNIFIED_WLC
+#define cc_psy_set_event_prop(_psy, _psp, _val) \
+	({\
+		struct power_supply *__psy = chgr_contr->_psy;\
+		union power_supply_propval __propval = { .intval = _val };\
+		int __rc = -ENXIO;\
+		if (likely(__psy && __psy->set_event_property)) {\
+			__rc = __psy->set_event_property(__psy, \
+				POWER_SUPPLY_PROP_##_psp, \
+				&__propval);\
+		} \
+		__rc;\
+	})
+#endif
+
 /* To set init charging current according to temperature and voltage of battery */
 #define CONFIG_LGE_SET_INIT_CURRENT
 
@@ -143,7 +179,7 @@ module_param_named(
 typedef enum vzw_chg_state {
 	VZW_NO_CHARGER,
 	VZW_NORMAL_CHARGING,
-	VZW_NOT_CHARGING,
+	VZW_INCOMPATIBLE_CHARGING,
 	VZW_UNDER_CURRENT_CHARGING,
 	VZW_USB_DRIVER_UNINSTALLED,
 	VZW_CHARGER_STATUS_MAX,
@@ -174,6 +210,9 @@ static enum power_supply_property pm_power_props_charger_contr_pros[] = {
 #ifdef CONFIG_LGE_PM_FACTORY_PSEUDO_BATTERY
 	POWER_SUPPLY_PROP_PSEUDO_BATT,
 #endif
+#ifdef CONFIG_LGE_PM_USB_CURRENT_MAX
+	POWER_SUPPLY_PROP_USB_CURRENT_MAX,
+#endif
 };
 
 struct charger_contr {
@@ -184,6 +223,9 @@ struct charger_contr {
 	struct power_supply *batt_psy;
 	struct power_supply *fg_psy;
 	struct power_supply *wireless_psy;
+#ifdef CONFIG_LGE_PM_UNIFIED_WLC
+	struct power_supply *unified_wireless_psy;
+#endif
 #ifdef CONFIG_LGE_PM_BATTERY_ID_CHECKER
 	struct power_supply *batt_id_psy;
 #endif
@@ -204,6 +246,7 @@ struct charger_contr {
 
 	/* pre-defined value by DT*/
 	int current_ibat;
+	int current_ibat_lcd_on;
 	int current_limit;
 	int current_wlc_preset;
 	int current_wlc_limit;
@@ -211,6 +254,8 @@ struct charger_contr {
 	int current_ibat_factory;
 
 	int thermal_status; /* status of lg charging scenario. but not used */
+	int status;
+	int current_status;
 	int batt_temp;
 	int origin_batt_temp;
 	int batt_volt;
@@ -229,9 +274,15 @@ struct charger_contr {
 	int wireless_lcs;
 #ifdef CONFIG_LGE_PM_QC20_SCENARIO
 	struct qc20_info qc20;
-	struct delayed_work 	highvol_check_work;
+	struct delayed_work highvol_check_work;
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	struct delayed_work qc20_ibat_limit_work;
+	bool is_cc_step_charging;
 #endif
-
+#endif
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	struct evp_info evp;
+#endif
 	int current_ibat_changed_by_cc;
 	int changed_ibat_by_cc;
 	int current_iusb_changed_by_cc;
@@ -254,7 +305,9 @@ struct charger_contr {
 
 	int current_usb_psy;
 	int current_wireless_psy;
-
+#ifdef CONFIG_LGE_PM_VZW_REQ
+	int wireless_init_current;
+#endif
 	int batt_temp_state;
 	int batt_volt_state;
 	int charge_type;
@@ -283,10 +336,20 @@ static int cc_iusb_limit = -1;
 #ifdef CONFIG_LGE_PM_QC20_SCENARIO
 static int cc_ibat_qc20_limit = -1;
 #endif
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+static int cc_ibat_evp_limit = -1;
+#endif
 static int cc_wireless_limit = -1;
 
 static int cc_init_ok;
 struct charger_contr *chgr_contr;
+#ifdef CONFIG_LGE_PM_USB_CURRENT_MAX
+unsigned int usb_current_max_enabled = 0;
+#endif
+
+#ifdef CONFIG_BATTERY_MAX17050
+int share_batt_temp;
+#endif
 
 static int get_prop_fuelgauge_capacity(void);
 #ifdef CONFIG_LGE_PM_CHARGE_INFO
@@ -364,8 +427,13 @@ static void charging_information(struct work_struct *work)
 	char *cable_type_name = cable_type_str[lge_pm_get_cable_type()];
 	int usbin_vol = cc_get_usb_adc();
 	char *batt_fake = batt_fake_str[pseudo_batt_info.mode];
+#if defined(CONFIG_BATTERY_MAX17048)
 	int batt_soc = max17048_get_capacity();
 	int batt_vol = max17048_get_voltage();
+#elif defined(CONFIG_BATTERY_MAX17050)
+	int batt_soc = max17050_get_battery_capacity_percent();
+	int batt_vol = max17050_get_battery_mvolts();
+#endif
 	int pmi_iusb_set = chgr_contr->current_iusb_changed_by_cc;
 	int pmi_iusb_aicl = chgr_contr->aicl_done_current;
 	int pmi_ibat_set = chgr_contr->current_ibat_changed_by_cc;
@@ -404,7 +472,11 @@ static void check_charging_state(struct work_struct *work)
 	int temp_changed = 0;
 	int volt_changed = 0;
 	int temp = charger_contr_get_battery_temperature();
+#if defined(CONFIG_BATTERY_MAX17048)
 	int volt = max17048_get_voltage();
+#elif defined(CONFIG_BATTERY_MAX17050)
+	int volt = max17050_get_battery_mvolts();
+#endif
 
 	if (temp != 0)
 		chgr_contr->batt_temp = temp/10;
@@ -417,7 +489,7 @@ static void check_charging_state(struct work_struct *work)
 			chgr_contr->batt_temp, chgr_contr->batt_temp_state,
 			chgr_contr->batt_volt, chgr_contr->batt_volt_state);
 
-#ifdef CONFIG_MACH_MSM8992_P1_SPR_US
+#if defined(CONFIG_MACH_MSM8992_P1_SPR_US) || defined(CONFIG_MACH_MSM8992_P1_ACG_US)
 	if (chgr_contr->batt_temp <= -5) {
 #else
 	if (chgr_contr->batt_temp <= -10) {
@@ -428,7 +500,7 @@ static void check_charging_state(struct work_struct *work)
 					CC_BATT_TEMP_STATE_COLD);
 			temp_changed = 1;
 		}
-#ifdef CONFIG_MACH_MSM8992_P1_SPR_US
+#if defined(CONFIG_MACH_MSM8992_P1_SPR_US) || defined(CONFIG_MACH_MSM8992_P1_ACG_US)
 	} else if (chgr_contr->batt_temp >= -2 && chgr_contr->batt_temp <= 42) {
 #else
 	} else if (chgr_contr->batt_temp >= -5 && chgr_contr->batt_temp <= 42) {
@@ -563,6 +635,16 @@ static int pm_set_property_charger_contr(struct power_supply *psy,
 		cc_psy_setprop(batt_psy, CHARGING_ENABLED, val->intval);
 #endif
 		break;
+#ifdef CONFIG_LGE_PM_USB_CURRENT_MAX
+	case POWER_SUPPLY_PROP_USB_CURRENT_MAX:
+		if (val->intval)
+			usb_current_max_enabled = 1;
+		else
+			usb_current_max_enabled = 0;
+		pr_cc(PR_INFO, "Set USB current max enabled : %d\n",
+			usb_current_max_enabled);
+		break;
+#endif
 	default:
 		pr_cc(PR_INFO, "Invalid property(%d)\n", psp);
 		return -EINVAL;
@@ -578,6 +660,9 @@ static int charger_contr_property_is_writerable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_BATTERY_CHARGING_ENABLED:
 #else
 	case POWER_SUPPLY_PROP_CHARGING_ENABLED:
+#endif
+#ifdef CONFIG_LGE_PM_USB_CURRENT_MAX
+	case POWER_SUPPLY_PROP_USB_CURRENT_MAX:
 #endif
 		return 1;
 	default:
@@ -650,6 +735,11 @@ static int pm_get_property_charger_contr(struct power_supply *psy,
 		val->intval = pseudo_batt_info.mode;
 		break;
 #endif
+#ifdef CONFIG_LGE_PM_USB_CURRENT_MAX
+	case POWER_SUPPLY_PROP_USB_CURRENT_MAX:
+		val->intval = usb_current_max_enabled;
+		break;
+#endif
 	default:
 		pr_cc(PR_INFO, "Invalid property(%d)\n", cc_property);
 		return -EINVAL;
@@ -674,7 +764,7 @@ static int charger_contr_get_battery_temperature(void)
 	if (chgr_contr->wlc_online) {
 		if (val.intval >= TX_PAD_TURN_OFF_TEMP) {
 			pr_cc(PR_INFO, "High temp, tx-pad off!\n");
-			wireless_chg_term_handler();
+			cc_psy_set_event_prop(unified_wireless_psy, WIRELESS_CHG_TERM, 0);
 		}
 	}
 #endif
@@ -706,6 +796,22 @@ static int charger_contr_get_battery_temperature(void)
 	return CHARGER_CONTROLLER_BATTERY_DEFAULT_TEMP;
 #endif
 }
+
+int lge_get_batt_temp(void)
+{
+	union power_supply_propval val = {0,};
+	int rc = 0;
+
+	rc = cc_psy_getprop(batt_psy, TEMP, &val);
+
+	if (!rc) {
+		pr_cc(PR_DEBUG, "battery temp =%d\n", val.intval);
+		return val.intval;
+	} else {
+		return CHARGER_CONTROLLER_BATTERY_DEFAULT_TEMP;
+	}
+}
+EXPORT_SYMBOL_GPL(lge_get_batt_temp);
 
 void update_thermal_condition(int state_changed)
 {
@@ -785,10 +891,19 @@ static int update_pm_psy_status(int requester)
 
 	cc_psy_getprop(wireless_psy, PRESENT, &val);
 	chgr_contr->wlc_online = val.intval;
+
 	if (chgr_contr->wlc_online) {
+#ifdef CONFIG_LGE_PM_VZW_REQ
+		chgr_contr->current_wireless_psy
+			= chgr_contr->wireless_init_current;
+		chgr_contr->vzw_chg_mode = VZW_NORMAL_CHARGING;
+#endif
 		chgr_contr->is_wireless = 1;
 	} else {
 		chgr_contr->is_wireless = 0;
+#ifdef CONFIG_LGE_PM_VZW_REQ
+		chgr_contr->current_wireless_psy = 0;
+#endif
 	}
 
 	cc_psy_getprop(usb_psy, ONLINE, &val);
@@ -798,23 +913,46 @@ static int update_pm_psy_status(int requester)
 			chgr_contr->usb_online, val.intval);
 
 	chgr_contr->usb_online = val.intval;
+#ifdef CONFIG_LGE_PM_VZW_REQ
 	if (chgr_contr->usb_online) {
+		chgr_contr->is_usb = 1;
+	} else {
+		chgr_contr->is_usb = 0;
+	}
+	if (chgr_contr->usb_online||chgr_contr->is_wireless) {
+#else
+	if (chgr_contr->usb_online) {
+#endif
 		cc_psy_getprop(usb_psy, CURRENT_MAX, &val);
 		if (val.intval &&
 			chgr_contr->current_usb_psy != val.intval/1000) {
 			pr_cc(PR_INFO, "Present iusb current =%d\n",
 				val.intval/1000);
 			chgr_contr->current_usb_psy = val.intval/1000;
+#ifdef CONFIG_LGE_PM_VZW_REQ
+			chgr_contr->vzw_chg_mode = VZW_NORMAL_CHARGING;
+#endif
 		}
+#ifndef CONFIG_LGE_PM_VZW_REQ
 		chgr_contr->is_usb = 1;
+#endif
 	} else {
 		chgr_contr->current_usb_psy = 0;
+#ifndef CONFIG_LGE_PM_VZW_REQ
 		chgr_contr->is_usb = 0;
+#endif
 #ifdef CONFIG_LGE_PM_QC20_SCENARIO
 		chgr_contr->qc20.is_qc20 = 0;
 		chgr_contr->qc20.is_highvol= 0;
 		chgr_contr->qc20.check_count = 0;
 		cancel_delayed_work(&chgr_contr->highvol_check_work);
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		cancel_delayed_work(&chgr_contr->qc20_ibat_limit_work);
+		chgr_contr->is_cc_step_charging = false;
+#endif
+#endif
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+		chgr_contr->evp.is_evp = 0;
 #endif
 #ifdef CONFIG_LGE_PM_VZW_REQ
 		chgr_contr->vzw_chg_mode = VZW_NO_CHARGER;
@@ -887,6 +1025,12 @@ static bool is_factory_cable_910k(void)
 #define PSEUDO_BATT_USB_ICL	900
 #endif
 
+#ifdef CONFIG_LGE_PM_USB_CURRENT_MAX
+#define USB_CURRENT_MAX 900
+#endif
+
+#define CONFIG_LGE_PM_FACTORY_USB_CURRENT_MAX 1000
+
 static void change_iusb(int value)
 {
 	pr_cc(PR_DEBUG, "change_iusb(value[%d])\n", value);
@@ -909,12 +1053,41 @@ static void change_iusb(int value)
 	}
 #endif
 
+#ifdef CONFIG_LGE_PM_USB_CURRENT_MAX
+	if ((usb_current_max_enabled)
+		&& (value < USB_CURRENT_MAX) && (chgr_contr->usb_online)) {
+		mutex_lock(&chgr_contr->notify_work_lock);
+		power_supply_set_current_limit(chgr_contr->usb_psy,
+			USB_CURRENT_MAX * 1000);
+		chgr_contr->current_iusb_changed_by_cc = value;
+		chgr_contr->current_iusb_limit[IUSB_NODE_1A_TA] = -1;
+		chgr_contr->changed_iusb_by_cc = 1;
+		mutex_unlock(&chgr_contr->notify_work_lock);
+		pr_cc(PR_INFO, "usb current max setting[%d], "
+			"current_iusb_changed_by_cc[%d], "
+			"value[%d]\n", USB_CURRENT_MAX,
+			chgr_contr->current_iusb_changed_by_cc, value);
+		return;
+	}
+#endif
+
 	if (chgr_contr->current_iusb_changed_by_cc == value)
 		return;
 
 	if (chgr_contr->usb_cable_info == CHARGER_CONTR_CABLE_FACTORY_CABLE) {
-		power_supply_set_current_limit(chgr_contr->usb_psy,
+
+		if (chgr_contr->batt_smem_present == 0) {
+			power_supply_set_current_limit(chgr_contr->usb_psy,
 				chgr_contr->current_iusb_factory * 1000);
+			pr_cc(PR_INFO, "factory Iusb[%d] with no battery\n",
+					chgr_contr->current_iusb_factory);
+		}
+		else {
+			power_supply_set_current_limit(chgr_contr->usb_psy,
+				CONFIG_LGE_PM_FACTORY_USB_CURRENT_MAX * 1000);
+			pr_cc(PR_INFO, "factory Iusb[%d] with battery\n",
+					CONFIG_LGE_PM_FACTORY_USB_CURRENT_MAX);
+		}
 	} else {
 		mutex_lock(&chgr_contr->notify_work_lock);
 		if(chgr_contr->wlc_online && !chgr_contr->usb_online){
@@ -933,7 +1106,6 @@ static void change_iusb(int value)
 	}
 	chgr_contr->current_iusb_changed_by_cc = value;
 	chgr_contr->changed_iusb_by_cc = 1;
-
 }
 
 static void change_ibat(int value)
@@ -1008,6 +1180,9 @@ static int set_charger_control_current(int limit, int requester)
 	int ibat_limit = 0;
 	int iusb_limit  = 0;
 	int iusb_limit_wireless = 0;
+#if defined(CONFIG_LGE_PM_QC20_SCENARIO) && defined(CONFIG_MACH_MSM8992_PPLUS)
+	int batt_volt = 0;
+#endif
 
 #ifdef CONFIG_LGE_PM_QC20_SCENARIO
 	if (chgr_contr->qc20.is_qc20 && chgr_contr->qc20.is_highvol) {
@@ -1016,6 +1191,21 @@ static int set_charger_control_current(int limit, int requester)
 			chgr_contr->qc20.iusb[chgr_contr->qc20.current_status];
 		chgr_contr->current_ibat_max =
 			chgr_contr->qc20.ibat[chgr_contr->qc20.current_status];
+
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		batt_volt = max17050_get_battery_mvolts();
+		if ((batt_volt >= QC20_BATTERY_VOLTAGE_THR ||
+			(chgr_contr->is_cc_step_charging &&
+			batt_volt >= QC20_BATTERY_VOLTAGE_THR_LOW)) &&
+			chgr_contr->current_ibat_max > QC20_BATTERY_CURRENT_LIMIT) {
+			chgr_contr->is_cc_step_charging = true;
+			chgr_contr->current_ibat_max = QC20_BATTERY_CURRENT_LIMIT;
+		}
+
+		schedule_delayed_work(&chgr_contr->qc20_ibat_limit_work,
+					msecs_to_jiffies(QC20_IBAT_LIMIT_POLL_TIME));
+#endif
+
 		if (chgr_contr->qc20.current_status == QC20_CURRENT_NORMAL)
 			chgr_contr->current_ibat_limit[IBAT_NODE_THERMAL] = cc_ibat_qc20_limit;
 		else
@@ -1025,34 +1215,58 @@ static int set_charger_control_current(int limit, int requester)
 		chgr_contr->current_iusb_limit[IUSB_NODE_THERMAL] = cc_iusb_limit;
 	} else
 #endif
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	if (chgr_contr->evp.is_evp) {
+		pr_cc(PR_INFO, "EVP Current Set!\n");
+		chgr_contr->current_iusb_max =
+			chgr_contr->evp.iusb[chgr_contr->evp.current_status];
+		chgr_contr->current_ibat_max =
+			chgr_contr->evp.ibat[chgr_contr->evp.current_status];
+
+		chgr_contr->current_ibat_limit[IBAT_NODE_THERMAL] = cc_ibat_limit;
+		chgr_contr->current_ibat_limit[IBAT_NODE_LGE_CHG] = chgr_contr->ibat_limit_lcs;
+		chgr_contr->current_iusb_limit[IUSB_NODE_THERMAL] = cc_iusb_limit;
+	} else
+#endif
 	if (chgr_contr->is_usb) {
 		pr_cc(PR_INFO, "USB Current Set!\n");
 		chgr_contr->current_iusb_max = chgr_contr->current_real_usb_psy;
-		chgr_contr->current_ibat_max = chgr_contr->current_ibat;
-		chgr_contr->current_iusb_limit[IUSB_NODE_THERMAL] = cc_iusb_limit;
+
+		if (chgr_contr->current_status == FAST_CHARGE_NORMAL)
+			chgr_contr->current_ibat_max = chgr_contr->current_ibat;
+		else
+			chgr_contr->current_ibat_max = chgr_contr->current_ibat_lcd_on;
+
+		if (chgr_contr->usb_cable_info == CHARGER_CONTR_CABLE_FACTORY_CABLE) {
+			pr_cc(PR_INFO, "Factory cable Ibat max current set [%d]\n",
+				chgr_contr->current_ibat_factory);
+			chgr_contr->current_ibat_max = chgr_contr->current_ibat_factory;
+		}
+
 		chgr_contr->current_ibat_limit[IBAT_NODE_THERMAL] = cc_ibat_limit;
 		chgr_contr->current_ibat_limit[IBAT_NODE_LGE_CHG] = chgr_contr->ibat_limit_lcs;
+		chgr_contr->current_iusb_limit[IUSB_NODE_THERMAL] = cc_iusb_limit;
 	} else if (chgr_contr->is_wireless) {
 		pr_cc(PR_INFO, "Wireless Current Set!\n");
 		/* Normal */
 		chgr_contr->current_iusb_max = chgr_contr->current_wireless_psy;
 		chgr_contr->current_ibat_max = chgr_contr->current_ibat_max_wireless;
 		/* Thermal */
-		if (cc_wireless_limit == -1 || cc_wireless_limit == WIRE_IUSB_NORMAL) {
+		if (cc_wireless_limit == -1 || cc_wireless_limit == WLC_IUSB_NORMAL) {
 			chgr_contr->currnet_iusb_wlc[IUSB_NODE_THERMAL_WIRELSS] =
 				chgr_contr->current_wireless_psy;
 			chgr_contr->current_ibat_limit[IBAT_NODE_THERMAL] =
 				chgr_contr->current_ibat_max_wireless;
-		} else if (cc_wireless_limit == WIRE_IUSB_THERMAL_1) {
+		} else if (cc_wireless_limit == WLC_IUSB_THERMAL_1) {
 			chgr_contr->currnet_iusb_wlc[IUSB_NODE_THERMAL_WIRELSS] =
-				WIRE_IUSB_THERMAL_1;
+				WLC_IUSB_THERMAL_1;
 			chgr_contr->current_ibat_limit[IBAT_NODE_THERMAL] =
-				WIRE_IBAT_THERMAL_1;
-		} else if (cc_wireless_limit == WIRE_IUSB_THERMAL_2) {
+				WLC_IBAT_THERMAL_1;
+		} else if (cc_wireless_limit == WLC_IUSB_THERMAL_2) {
 			chgr_contr->currnet_iusb_wlc[IUSB_NODE_THERMAL_WIRELSS] =
-				WIRE_IUSB_THERMAL_2;
+				WLC_IUSB_THERMAL_2;
 			chgr_contr->current_ibat_limit[IBAT_NODE_THERMAL] =
-				WIRE_IBAT_THERMAL_2;
+				WLC_IBAT_THERMAL_2;
 		} else {
 			chgr_contr->currnet_iusb_wlc[IUSB_NODE_THERMAL_WIRELSS] = cc_wireless_limit;
 			chgr_contr->current_ibat_limit[IBAT_NODE_THERMAL] = cc_wireless_limit;
@@ -1062,7 +1276,7 @@ static int set_charger_control_current(int limit, int requester)
 			chgr_contr->currnet_iusb_wlc[IUSB_NODE_OTP_WIRELESS] = chgr_contr->current_wireless_psy;
 			chgr_contr->current_ibat_limit[IBAT_NODE_LGE_CHG_WLC] =
 				chgr_contr->current_ibat_max_wireless;
-		} else if (chgr_contr->wireless_lcs == WIRE_OTP_LIMIT) {
+		} else if (chgr_contr->wireless_lcs == WLC_OTP_LIMIT) {
 			chgr_contr->currnet_iusb_wlc[IUSB_NODE_OTP_WIRELESS] = chgr_contr->wireless_lcs;
 			chgr_contr->current_ibat_limit[IBAT_NODE_LGE_CHG_WLC] =
 				chgr_contr->wireless_lcs;
@@ -1137,6 +1351,11 @@ int charger_controller_main(int requester)
 		set_charger_control_current(chgr_contr->current_iusb_limit[IUSB_NODE_NO],
 			requester);
 #endif
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	if (requester == REQUEST_BY_EVP)
+		set_charger_control_current(chgr_contr->current_iusb_limit[IUSB_NODE_NO],
+			requester);
+#endif
 
 	return 0;
 }
@@ -1161,8 +1380,13 @@ void changed_by_wireless_psy(void)
 {
 	bool wireless_present = is_wireless_present();
 
-	wireless_interrupt_handler(wireless_present);
+	cc_psy_set_event_prop(unified_wireless_psy, WIRELESS_INTERRUPT, wireless_present);
 	pr_cc(PR_INFO, "[WLC] changed wireless state = %d\n", wireless_present);
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI4)
+	update_status(6, wireless_present);
+#elif defined(CONFIG_LGE_TOUCH_CORE)
+	touch_notify_wireless(wireless_present);
+#endif
 }
 #endif
 
@@ -1180,6 +1404,9 @@ void changed_by_wireless_psy(void)
 #define VZW_CHG_MAX_CURRENT	2100
 #define VZW_CHG_MIN_CURRENT	400
 #define VZW_SLOW_CHARGER_RESET_COUNT	5
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+#define VZW_SLOW_CHARGER_CHECK_COUNT 3
+#endif
 #define VZW_SLOW_CHARGER_MAX_COUNT	27000
 #endif
 void changed_by_batt_psy(void)
@@ -1190,11 +1417,18 @@ void changed_by_batt_psy(void)
 #ifdef CONFIG_LGE_PM_VZW_REQ
 	char *usb_type_name = get_usb_type();
 	int vzw_aicl_complete;
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	int vzw_total_usb_current;
+#endif
 #endif
 #ifdef CONFIG_LGE_PM_LLK_MODE
 	int capacity_level;
 #endif
 
+#ifdef CONFIG_BATTERY_MAX17050
+	share_batt_temp = chgr_contr->origin_batt_temp;
+	pr_cc(PR_DEBUG, "share_batt_temp = %d\n",share_batt_temp);
+#endif
 	wireless_present = is_wireless_present();
 	usb_present = is_usb_present();
 	/* update battery status information */
@@ -1210,7 +1444,7 @@ void changed_by_batt_psy(void)
 	if (chgr_contr->batt_eoc == 1) {
 #ifdef CONFIG_LGE_PM_UNIFIED_WLC
 		if (wireless_present)
-			wireless_chg_term_handler();
+			cc_psy_set_event_prop(unified_wireless_psy, WIRELESS_CHG_TERM, 0);
 #endif
 	}
 
@@ -1241,11 +1475,19 @@ void changed_by_batt_psy(void)
 	cc_psy_getprop(batt_psy, INPUT_CURRENT_SETTLED, &val);
 #ifdef CONFIG_LGE_PM_VZW_REQ
 	vzw_aicl_complete = val.intval;
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	if (vzw_aicl_complete) {
+		cc_psy_getprop(batt_psy, TOTAL_USB_CURRENT, &val);
+		vzw_total_usb_current = val.intval;
+		pr_cc(PR_INFO, "vzw_total_usb_current = %d\n", vzw_total_usb_current);
+	}
+#endif
 #endif
 	if (val.intval) {
-		cc_psy_getprop(batt_psy, INPUT_CURRENT_TRIM, &val);
-		chgr_contr->aicl_done_current = val.intval;
-		pr_cc(PR_INFO, "aicl_done_current = %d\n", val.intval);
+		cc_psy_getprop(batt_psy, INPUT_CURRENT_MAX, &val);
+		chgr_contr->aicl_done_current = val.intval / 1000;
+		pr_cc(PR_INFO, "aicl_done_current = %d\n",
+				chgr_contr->aicl_done_current);
 	}
 #ifdef CONFIG_LGE_PM_VZW_REQ
 	/*floated charger detect*/
@@ -1253,19 +1495,45 @@ void changed_by_batt_psy(void)
 		pr_cc(PR_INFO, "get usb type for"\
 			"float charger detect = %s\n", usb_type_name);
 		if (chgr_contr->usb_psy->is_floated_charger) {
-			chgr_contr->vzw_chg_mode = VZW_NOT_CHARGING;
+			chgr_contr->vzw_chg_mode = VZW_INCOMPATIBLE_CHARGING;
 			pr_cc(PR_INFO, "float charger detect = %d\n",
 				chgr_contr->usb_psy->is_floated_charger);
-			cc_psy_setprop(batt_psy, BATTERY_CHARGING_ENABLED, 0);
 		} else {
 			chgr_contr->vzw_chg_mode = VZW_NO_CHARGER;
 			pr_cc(PR_INFO, "float charger value = %d\n",
 				chgr_contr->usb_psy->is_floated_charger);
 		}
 	}
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	/* Under current charger detect */
+	if (vzw_aicl_complete) {
+		if (vzw_total_usb_current <= VZW_CHG_MIN_CURRENT) {
+			chgr_contr->vzw_under_current_count++;
+			pr_cc(PR_INFO, "under_current_count = %d\n",
+					chgr_contr->vzw_under_current_count);
+		}
+		else
+			chgr_contr->vzw_under_current_count = 0;
+
+		if (chgr_contr->vzw_under_current_count < VZW_SLOW_CHARGER_CHECK_COUNT) {
+			chgr_contr->vzw_chg_mode = VZW_NORMAL_CHARGING;
+			pr_cc(PR_INFO, "VZW_NORMAL_CHARGING STATE\n");
+		} else if (chgr_contr->vzw_under_current_count >= VZW_SLOW_CHARGER_CHECK_COUNT) {
+			chgr_contr->vzw_chg_mode = VZW_UNDER_CURRENT_CHARGING;
+			pr_cc(PR_INFO, "VZW_UNDER_CURRENT_CHARGING STATE\n");
+		} else {
+			chgr_contr->vzw_chg_mode = VZW_INCOMPATIBLE_CHARGING;
+			pr_cc(PR_INFO, "VZW_INCOMPATIBLE_CHARGING STATE\n");
+			return;
+		}
+	}
+#else
+	pr_cc(PR_INFO, "QC2.0 check for VZW REQ...Pre state = (%d)\n",
+			chgr_contr->qc20.is_qc20);
 	/* Under current charger and normal charger detect */
 	if (vzw_aicl_complete) {
-		if (chgr_contr->aicl_done_current <= VZW_CHG_MIN_CURRENT) {
+		if (chgr_contr->aicl_done_current <= VZW_CHG_MIN_CURRENT
+				&& chgr_contr->qc20.is_qc20 == 0) {
 			chgr_contr->vzw_under_current_count++;
 			/* Occasionally, once the code below taken to correct the error value is 300 AICL Done. */
 			/* VZW_SLOW_CHARGER_MAX_COUNT : The approximate time when 400mA charge*/
@@ -1283,17 +1551,18 @@ void changed_by_batt_psy(void)
 				chgr_contr->vzw_chg_mode = VZW_UNDER_CURRENT_CHARGING;
 				pr_cc(PR_INFO, "under current set count= %d\n", chgr_contr->vzw_under_current_count);
 		} else {
-			chgr_contr->vzw_chg_mode = VZW_NOT_CHARGING;
+			chgr_contr->vzw_chg_mode = VZW_INCOMPATIBLE_CHARGING;
 			pr_cc(PR_INFO, "Can's set VZW_CHG_STATE\n");
 			return;
 		}
 	}
+#endif
 	if (!strcmp(usb_type_name, "Unknown")) {
 		chgr_contr->vzw_under_current_count = 0;
-		pr_cc(PR_INFO, "under current set count= %d\n", chgr_contr->vzw_under_current_count);
+		pr_cc(PR_INFO, "Unknown type usb detect, under current count reset\n");
 	}
 	pr_cc(PR_INFO, "Set VZW_CHG_STATE = %d :"\
-			" 0=NO_CHAGER,1=NORMAL, 2=NOT_CHARGING,"\
+			" 0=NO_CHAGER, 1=NORMAL, 2=INCOMPATIBLE_CHARGING, "\
 				"3=UNDER_CURRENT\n", chgr_contr->vzw_chg_mode);
 	power_supply_changed(chgr_contr->cc_psy);
 #endif
@@ -1338,7 +1607,7 @@ void changed_by_batt_psy(void)
 
 int notify_charger_controller(struct power_supply *psy, int requester)
 {
-#ifdef CONFIG_LGE_PM_QC20_SCENARIO
+#if defined(CONFIG_LGE_PM_QC20_SCENARIO) || defined(CONFIG_LGE_PM_MAXIM_EVP_CONTROL)
 	union power_supply_propval val = {0,};
 	int rc;
 #endif
@@ -1373,12 +1642,53 @@ int notify_charger_controller(struct power_supply *psy, int requester)
 		}
 
 		if (val.intval == POWER_SUPPLY_TYPE_USB_HVDCP) {
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+			rc = cc_psy_getprop(batt_psy, ENABLE_QC20_CHG, &val);
+			pr_cc(PR_INFO, "[QC20] is_qc20_ta = %d\n", val.intval);
+			if (val.intval == 1) {
+				pr_cc(PR_INFO, "[QC20] Detecting QC 2.0.\n");
+				chgr_contr->qc20.is_qc20 = 1;
+				schedule_delayed_work(&chgr_contr->highvol_check_work,
+					msecs_to_jiffies(100));
+			}
+			else {
+				chgr_contr->qc20.is_qc20 = 0;
+			}
+		} else {
+			chgr_contr->qc20.is_qc20 = 0;
+		}
+#else
 			pr_cc(PR_INFO, "[QC20] Detecting QC 2.0.\n");
 			chgr_contr->qc20.is_qc20 = 1;
 			schedule_delayed_work(&chgr_contr->highvol_check_work,
 				msecs_to_jiffies(100));
 		} else {
 			chgr_contr->qc20.is_qc20 = 0;
+		}
+#endif
+	}
+#endif
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	if (!strcmp(psy->name, USB_PSY_NAME) && !chgr_contr->evp.is_evp) {
+		rc = cc_psy_getprop(usb_psy, TYPE, &val);
+		if (rc) {
+			pr_cc(PR_ERR, "[EVP] TYPE getprop error =%d\n", rc);
+			return 0;
+		}
+
+		if (val.intval == POWER_SUPPLY_TYPE_USB_HVDCP) {
+			rc = cc_psy_getprop(batt_psy, ENABLE_EVP_CHG, &val);
+			pr_cc(PR_INFO, "[EVP] is_evp_ta = %d\n", val.intval);
+			if (val.intval == 1) {
+				pr_cc(PR_INFO, "[EVP] Detecting EVP.\n");
+				chgr_contr->evp.is_evp = 1;
+				changed_by_power_source(REQUEST_BY_EVP);
+			}
+			else {
+				chgr_contr->evp.is_evp = 0;
+			}
+		} else {
+			chgr_contr->evp.is_evp = 0;
 		}
 	}
 #endif
@@ -1607,6 +1917,14 @@ static void cc_highvol_check_work(struct work_struct *work)
 	}
 }
 
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+static void cc_qc20_ibat_limit_work(struct work_struct *work)
+{
+	notify_charger_controller(&chgr_contr->charger_contr_psy,
+                                REQUEST_BY_IBAT_LIMIT);
+}
+#endif
+
 static int set_ibat_qc20_limit (const char *val, struct kernel_param *kp)
 {
 	int ret;
@@ -1632,6 +1950,9 @@ module_param_call(cc_ibat_qc20_limit, set_ibat_qc20_limit,
 	param_get_int, &cc_ibat_qc20_limit, 0644);
 
 static int quick_charging_state;
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+#define LOW_SOC_LEVEL 5
+#endif
 static int set_quick_charging_state(const char *val, struct kernel_param *kp)
 {
 	int ret;
@@ -1647,39 +1968,113 @@ static int set_quick_charging_state(const char *val, struct kernel_param *kp)
 		break;
 
 	case QC20_STATUS_LCD_ON:
-		chgr_contr->qc20.status  |= QC20_LCD_STATE;
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		if (get_prop_fuelgauge_capacity() <= LOW_SOC_LEVEL) {
+			chgr_contr->qc20.status &= ~QC20_LCD_STATE;
+			chgr_contr->status	&= ~QC20_LCD_STATE;
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+			chgr_contr->evp.status	&= ~EVP_LCD_STATE;
+#endif
+		}
+		else {
+#endif
+			chgr_contr->qc20.status  |= QC20_LCD_STATE;
+			chgr_contr->status  |= QC20_LCD_STATE;
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+			chgr_contr->evp.status  |= EVP_LCD_STATE;
+#endif
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		}
+#endif
 		break;
 
 	case QC20_STATUS_LCD_OFF:
 		chgr_contr->qc20.status &= ~QC20_LCD_STATE;
+		chgr_contr->status  &= ~QC20_LCD_STATE;
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+		chgr_contr->evp.status  &= ~EVP_LCD_STATE;
+#endif
 		break;
 
 	case QC20_STATUS_CALL_ON:
 		chgr_contr->qc20.status  |= QC20_CALL_STATE;
+		chgr_contr->status  |= QC20_CALL_STATE;
 		break;
 
 	case QC20_STATUS_CALL_OFF:
 		chgr_contr->qc20.status  &= ~QC20_CALL_STATE;
+		chgr_contr->status  &= ~QC20_CALL_STATE;
 		break;
 	default:
 		pr_cc(PR_ERR, "[QC20] qpnp_qc20_state_update state err\n");
 	}
 	pr_cc(PR_INFO, "[QC20] set_quick_charging_state %d, status %d\n",
 		quick_charging_state, chgr_contr->qc20.status);
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	pr_cc(PR_INFO, "[EVP] set_quick_charging_state %d, status %d\n",
+		quick_charging_state, chgr_contr->evp.status);
+#endif
 
 	if (chgr_contr->qc20.status)
 		chgr_contr->qc20.current_status = QC20_CURRENT_LIMMITED;
 	else
 		chgr_contr->qc20.current_status = QC20_CURRENT_NORMAL;
 
+	if (chgr_contr->status)
+		chgr_contr->current_status = FAST_CHARGE_LIMMITED;
+	else
+		chgr_contr->current_status = FAST_CHARGE_NORMAL;
+
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	if (chgr_contr->evp.status)
+		chgr_contr->evp.current_status = EVP_CURRENT_LIMMITED;
+	else
+		chgr_contr->evp.current_status = EVP_CURRENT_NORMAL;
+#endif
+
 	if (chgr_contr->qc20.is_qc20 && chgr_contr->qc20.is_highvol)
 		notify_charger_controller(&chgr_contr->charger_contr_psy,
 			REQUEST_BY_QC20);
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	else if (chgr_contr->evp.is_evp)
+		notify_charger_controller(&chgr_contr->charger_contr_psy,
+			REQUEST_BY_EVP);
+#endif
+	else if (chgr_contr->is_usb)
+		notify_charger_controller(&chgr_contr->charger_contr_psy,
+			REQUEST_BY_IBAT_LIMIT);
 
 	return 0;
 }
 module_param_call(quick_charging_state, set_quick_charging_state,
 	param_get_int, &quick_charging_state, 0644);
+#endif
+
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+static int set_ibat_evp_limit (const char *val, struct kernel_param *kp)
+{
+	int ret;
+
+	if (!cc_init_ok)
+		return 0;
+
+	ret = param_set_int(val, kp);
+	if (ret) {
+		pr_cc(PR_ERR, "error setting value %d\n", ret);
+		return ret;
+	}
+	pr_cc(PR_INFO, "[EVP] set iBAT limit current(%d)\n", cc_ibat_evp_limit);
+
+	if (chgr_contr->evp.is_evp) {
+		notify_charger_controller(&chgr_contr->charger_contr_psy,
+			REQUEST_BY_IBAT_LIMIT);
+	}
+	return 0;
+
+}
+module_param_call(cc_ibat_evp_limit, set_ibat_evp_limit,
+	param_get_int, &cc_ibat_evp_limit, 0644);
+
 #endif
 
 #ifdef CONFIG_LGE_PM_BATTERY_ID_CHECKER
@@ -1702,7 +2097,7 @@ int battery_id_check(void)
 	else
 		chgr_contr->batt_smem_present = 1;
 
-#ifdef CONFIG_MACH_MSM8992_P1
+#if defined(CONFIG_MACH_MSM8992_P1) || defined(CONFIG_MACH_MSM8992_PPLUS) || defined(CONFIG_MACH_MSM8992_P1A4WP)
 	/*  P1 use the battery of 4.35V for developer,
 	  * but the battery of customer is 4.4V.
 	  *  So, the device must update vfloat_mv to 4.35V in battery of developer.
@@ -1916,6 +2311,9 @@ static int get_prop_fuelgauge_capacity(void)
 
 #ifdef CONFIG_LGE_PM_FACTORY_PSEUDO_BATTERY
 	if (pseudo_batt_info.mode) {
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		return pseudo_batt_info.capacity;
+#endif
 		rc = cc_psy_getprop(fg_psy, CAPACITY, &val);
 		if (rc)
 			val.intval = DEFAULT_FAKE_BATT_CAPACITY;
@@ -2051,10 +2449,12 @@ static int chargercontroller_parse_dt(struct device_node *dev_node, struct charg
 {
 	int ret;
 
-#ifdef CONFIG_LGE_PM_QC20_SCENARIO
+#if defined(CONFIG_LGE_PM_QC20_SCENARIO) || defined(CONFIG_LGE_PM_MAXIM_EVP_CONTROL)
 	int i;
 	u32 current_value[2];
+#endif
 
+#ifdef CONFIG_LGE_PM_QC20_SCENARIO
 	of_property_read_u32_array(dev_node, "lge,chargercontroller-iusb-qc20",
 			current_value, 2);
 	for (i = 0; i < QC20_CURRENT_MAX; i++)
@@ -2069,6 +2469,21 @@ static int chargercontroller_parse_dt(struct device_node *dev_node, struct charg
 			cc->qc20.iusb[0], cc->qc20.iusb[1],
 			cc->qc20.ibat[0], cc->qc20.ibat[1]);
 #endif
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+	of_property_read_u32_array(dev_node, "lge,chargercontroller-iusb-evp",
+			current_value, 2);
+	for (i = 0; i < EVP_CURRENT_MAX; i++)
+		cc->evp.iusb[i] = current_value[i];
+
+	of_property_read_u32_array(dev_node, "lge,chargercontroller-ibat-evp",
+			current_value, 2);
+	for (i = 0; i < EVP_CURRENT_MAX; i++)
+		cc->evp.ibat[i] = current_value[i];
+
+	pr_cc(PR_DEBUG, "[EVP] iusb-evp[%d %d], ibat-evp[%d %d]\n",
+			cc->evp.iusb[0], cc->evp.iusb[1],
+			cc->evp.ibat[0], cc->evp.ibat[1]);
+#endif
 	ret = of_property_read_u32(dev_node,
 		"lge,chargercontroller-current-ibat-max",
 		&(cc->current_ibat));
@@ -2077,6 +2492,16 @@ static int chargercontroller_parse_dt(struct device_node *dev_node, struct charg
 	if (ret) {
 		pr_cc(PR_ERR, "Unable to read current_ibat_max. Set 1600.\n");
 		cc->current_ibat = 1600;
+	}
+
+	ret = of_property_read_u32(dev_node,
+		"lge,chargercontroller-current-ibat-lcd_on",
+		&(cc->current_ibat_lcd_on));
+	pr_cc(PR_DEBUG, "current_ibat_lcd_on = %d from DT\n",
+				cc->current_ibat_lcd_on);
+	if (ret) {
+		pr_cc(PR_ERR, "Unable to read current_ibat_lcd_on. Set 1000.\n");
+		cc->current_ibat_lcd_on = 1000;
 	}
 
 	ret = of_property_read_u32(dev_node, "lge,chargercontroller-current-limit",
@@ -2147,13 +2572,13 @@ void get_init_condition_theraml_engine(int batt_temp, int batt_volt)
 	} else
 		chgr_contr->batt_temp = batt_temp;
 
-#ifdef CONFIG_MACH_MSM8992_P1_SPR_US
+#if defined(CONFIG_MACH_MSM8992_P1_SPR_US) || defined(CONFIG_MACH_MSM8992_P1_ACG_US)
 	if (chgr_contr->batt_temp < -5)
 #else
 	if (chgr_contr->batt_temp < -10)
 #endif
 		chgr_contr->batt_temp_state = CC_BATT_TEMP_STATE_COLD;
-#ifdef CONFIG_MACH_MSM8992_P1_SPR_US
+#if defined(CONFIG_MACH_MSM8992_P1_SPR_US) || defined(CONFIG_MACH_MSM8992_P1_ACG_US)
 	else if (chgr_contr->batt_temp >= -2 &&
 #else
 	else if (chgr_contr->batt_temp >= -5 &&
@@ -2168,6 +2593,8 @@ void get_init_condition_theraml_engine(int batt_temp, int batt_volt)
 	if (batt_volt == 0)
 #if defined(CONFIG_BATTERY_MAX17048)
 		chgr_contr->batt_volt = max17048_get_voltage();
+#elif defined(CONFIG_BATTERY_MAX17050)
+		chgr_contr->batt_volt = max17050_get_battery_mvolts();
 #else
 		chgr_contr->batt_volt = CHARGER_CONTR_VOLTAGE_3_7V;
 #endif
@@ -2208,21 +2635,6 @@ static int charger_contr_probe(struct platform_device *pdev)
 
 	pr_cc(PR_INFO, "charger_contr_probe start\n");
 
-#ifdef CONFIG_LGE_PM_FACTORY_PSEUDO_BATTERY
-	if (p_cable_type) {
-		cable_type = *p_cable_type;
-	} else {
-		cable_type = 0;
-	}
-
-	if (cable_type == LT_CABLE_56K || cable_type == LT_CABLE_130K ||
-						cable_type == LT_CABLE_910K) {
-		pseudo_batt_info.mode = 1;
-	}
-	pr_info("cable_type = %d, pseudo_batt_info.mode = %d\n", cable_type,
-							pseudo_batt_info.mode);
-#endif
-
 	cc = kzalloc(sizeof(struct charger_contr), GFP_KERNEL);
 
 	if (!cc) {
@@ -2240,23 +2652,32 @@ static int charger_contr_probe(struct platform_device *pdev)
 	cc->usb_psy = power_supply_get_by_name(USB_PSY_NAME);
 	if (cc->usb_psy == NULL) {
 		pr_cc(PR_ERR, "Not Ready(usb_psy)\n");
-		ret =	-EPROBE_DEFER;
+		ret = -EPROBE_DEFER;
 		goto error;
 	}
 
 	cc->batt_psy = power_supply_get_by_name(BATT_PSY_NAME);
 	if (cc->batt_psy == NULL) {
 		pr_cc(PR_ERR, "Not Ready(batt_psy)\n");
-		ret =	-EPROBE_DEFER;
+		ret = -EPROBE_DEFER;
 		goto error;
 	}
 
 	cc->wireless_psy = power_supply_get_by_name(WIRELESS_PSY_NAME);
 	if (cc->wireless_psy == NULL) {
 		pr_cc(PR_ERR, "Not Ready(wireless_psy)\n");
-		ret =	-EPROBE_DEFER;
+		ret = -EPROBE_DEFER;
 		goto error;
 	}
+
+#ifdef CONFIG_LGE_PM_UNIFIED_WLC
+	cc->unified_wireless_psy = power_supply_get_by_name(UNIFIED_WIRELESS_PSY_NAME);
+	if (cc->unified_wireless_psy == NULL) {
+		pr_cc(PR_ERR, "Not Ready(unified_wireless_psy)\n");
+		ret = -EPROBE_DEFER;
+		goto error;
+	}
+#endif
 
 #ifdef CONFIG_LGE_PM_BATTERY_ID_CHECKER
 	cc->batt_id_psy = power_supply_get_by_name(BATT_ID_PSY_NAME);
@@ -2267,11 +2688,14 @@ static int charger_contr_probe(struct platform_device *pdev)
 	}
 #endif
 
-if (cc->wireless_psy != NULL) {
+	if (cc->wireless_psy != NULL) {
 		cc_psy_getprop(wireless_psy, CURRENT_MAX, &val);
 		if (val.intval) {
 			pr_info("[ChargerController] Present wireless current =%d\n", val.intval/1000);
 			cc->current_wireless_psy = val.intval/1000;
+#ifdef CONFIG_LGE_PM_VZW_REQ
+			cc->wireless_init_current = cc->current_wireless_psy;
+#endif
 		}
 	}
 
@@ -2327,6 +2751,20 @@ if (cc->wireless_psy != NULL) {
 #ifdef CONFIG_LGE_PM_BATTERY_ID_CHECKER
 	battery_id_check();
 #endif
+#ifdef CONFIG_LGE_PM_FACTORY_PSEUDO_BATTERY
+	if (p_cable_type) {
+		cable_type = *p_cable_type;
+	} else {
+		cable_type = 0;
+	}
+
+	if ((cable_type == LT_CABLE_56K || cable_type == LT_CABLE_130K ||
+		cable_type == LT_CABLE_910K) && cc->batt_smem_present == 0) {
+		pseudo_batt_info.mode = 1;
+	}
+	pr_info("cable_type = %d, batt_present = %d, pseudo_batt_info.mode = %d\n",
+		cable_type, cc->batt_smem_present, pseudo_batt_info.mode);
+#endif
 #ifdef CONFIG_LGE_PM_VFLOAT_CHANGE
 	ret = cc_psy_getprop(batt_psy, VOLTAGE_MAX, &val);
 	if (ret) {
@@ -2348,10 +2786,18 @@ if (cc->wireless_psy != NULL) {
 	INIT_DELAYED_WORK(&cc->charging_inform_work, charging_information);
 #endif
 #ifdef CONFIG_LGE_PM_QC20_SCENARIO
-	if (lge_get_boot_mode() == LGE_BOOT_MODE_NORMAL)
-		cc->qc20.status  |= QC20_LCD_STATE;
+	if (lge_get_boot_mode() == LGE_BOOT_MODE_NORMAL){
+		cc->qc20.status |= QC20_LCD_STATE;
+#ifdef CONFIG_LGE_PM_MAXIM_EVP_CONTROL
+		cc->evp.status |= EVP_LCD_STATE;
+#endif
+		cc->status |= QC20_LCD_STATE;
+	}
 
 	INIT_DELAYED_WORK(&cc->highvol_check_work, cc_highvol_check_work);
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	INIT_DELAYED_WORK(&cc->qc20_ibat_limit_work, cc_qc20_ibat_limit_work);
+#endif
 #endif
 
 #ifdef CONFIG_LGE_PM_FACTORY_TESTMODE

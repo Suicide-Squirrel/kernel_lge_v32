@@ -38,10 +38,10 @@
 #define DLOAD_MODE_ADDR           0x0
 
 #define CRASH_HANDLER_MAGIC_NUM   0x4c474500
-#define CRASH_HANDLER_MAGIC_ADDR  0x28
-#define RAM_CONSOLE_ADDR_ADDR     0x2C
-#define RAM_CONSOLE_SIZE_ADDR     0x30
-#define FB_ADDR_ADDR              0x34
+#define CRASH_HANDLER_MAGIC_ADDR  0x34
+#define RAM_CONSOLE_ADDR_ADDR     0x38
+#define RAM_CONSOLE_SIZE_ADDR     0x3C
+#define FB_ADDR_ADDR              0x40
 
 #define RESTART_REASON      (msm_imem_base + RESTART_REASON_ADDR)
 #define CRASH_HANDLER_MAGIC (msm_imem_base + CRASH_HANDLER_MAGIC_ADDR)
@@ -425,6 +425,15 @@ static int __init lge_panic_handler_early_init(void)
 		return -ENODEV;
 	}
 
+	/* check struct boot_shared_imem_cookie_type is matched */
+	crash_handler_magic = __raw_readl(CRASH_HANDLER_MAGIC);
+	WARN(crash_handler_magic != CRASH_HANDLER_MAGIC_NUM,
+			"Check sbl's struct boot_shared_imem_cookie_type.\n"
+			"Need to update lge_handle_panic's imem offset.\n");
+
+	/* Set default restart_reason to Unknown reset. */
+	lge_set_restart_reason(LGE_RB_MAGIC | LGE_ERR_TZ);
+
 	np = of_find_compatible_node(NULL, NULL, "crash_fb");
 	if (!np) {
 		pr_err("unable to find crash_fb node\n");
@@ -436,15 +445,6 @@ static int __init lge_panic_handler_early_init(void)
 
 	pr_info("%s: reserved[@0x%lx+@0x%lx)\n", PANIC_HANDLER_NAME,
 			panic_handler->fb_addr, panic_handler->fb_size);
-
-	/* check struct boot_shared_imem_cookie_type is matched */
-	crash_handler_magic = __raw_readl(CRASH_HANDLER_MAGIC);
-	WARN(crash_handler_magic != CRASH_HANDLER_MAGIC_NUM,
-			"Check sbl's struct boot_shared_imem_cookie_type.\n"
-			"Need to update lge_handle_panic's imem offset.\n");
-
-	/* Set default restart_reason to Unknown reset. */
-	lge_set_restart_reason(LGE_RB_MAGIC | LGE_ERR_TZ);
 
 	return 0;
 }

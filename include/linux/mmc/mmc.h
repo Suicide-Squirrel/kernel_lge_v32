@@ -32,6 +32,14 @@ static inline bool mmc_op_multi(u32 opcode)
 	       opcode == MMC_READ_MULTIPLE_BLOCK;
 }
 
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+static inline bool mmc_op_cmdq_execute_task(u32 opcode)
+{
+	return opcode == MMC_EXECUTE_READ_TASK ||
+		opcode == MMC_EXECUTE_WRITE_TASK;
+}
+#endif
+
 /*
  * MMC_SWITCH argument format:
  *
@@ -286,6 +294,12 @@ struct _mmc_csd {
 #define EXT_CSD_BKOPS_SUPPORT		502	/* RO */
 #define EXT_CSD_HPI_FEATURES		503	/* RO */
 
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+#define EXT_CSD_CMDQ_MODE_EN		15	/* R/W/E_P */
+#define EXT_CSD_CMDQ_DEPTH			307	/* RO */
+#define EXT_CSD_CMDQ_SUPPORT		308	/* RO */
+#endif
+
 /*
  * EXT_CSD field definitions
  */
@@ -301,6 +315,9 @@ struct _mmc_csd {
 #define EXT_CSD_BOOT_WP_B_PWR_WP_EN	(0x01)
 
 #define EXT_CSD_PART_CONFIG_ACC_MASK	(0x7)
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+#define EXT_CSD_PART_CONFIG_USER	(0x0)
+#endif
 #define EXT_CSD_PART_CONFIG_ACC_BOOT0	(0x1)
 #define EXT_CSD_PART_CONFIG_ACC_RPMB	(0x3)
 #define EXT_CSD_PART_CONFIG_ACC_GP0	(0x4)
@@ -373,6 +390,12 @@ struct _mmc_csd {
  * BKOPS status level
  */
 #define EXT_CSD_BKOPS_LEVEL_2		0x2
+
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+/* CMDQ enable level */
+#define EXT_CSD_CMDQ_MODE_OFF		0
+#define EXT_CSD_CMDQ_MODE_ON		1
+#endif
 
 /*
  * MMC_SWITCH access modes

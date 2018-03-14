@@ -11,11 +11,17 @@
 #include <linux/delay.h>
 #include <linux/workqueue.h>
 #include <linux/wakelock.h>         /* wake_lock, unlock */
-
+#if defined (CONFIG_MACH_MSM8992_PPLUS_KR)
+#include <soc/qcom/lge/board_lge.h>
+#endif
 #include "../../broadcast_tdmb_drv_ifdef.h"
 #include "../inc/broadcast_fc8080.h"
 #include "../inc/fci_types.h"
 #include "../inc/bbm.h"
+
+#if defined (CONFIG_MACH_MSM8992_PPLUS_KR)
+#include <soc/qcom/lge/board_lge.h>
+#endif
 
 //#include <linux/pm_qos.h> // FEATURE_DMB_USE_PM_QOS
 
@@ -40,9 +46,11 @@ static int broadcast_tdmb_fc8080_resume(struct spi_device *spi);
 
 /* SPI Data read using workqueue */
 //#define FEATURE_DMB_USE_WORKQUEUE
-#define FEATURE_DMB_USE_XO
+//#define FEATURE_DMB_USE_XO
 //#define FEATURE_DMB_USE_BUS_SCALE
 //#define FEATURE_DMB_USE_PM_QOS
+
+bool dmb_use_xo = true;
 
 /************************************************************************/
 /* LINUX Driver Setting                                                 */
@@ -60,9 +68,7 @@ struct tdmb_fc8080_ctrl_blk
     struct wake_lock                        wake_lock;    /* wake_lock,wake_unlock */
     boolean                                    spi_irq_status;
     spinlock_t                                spin_lock;
-#ifdef FEATURE_DMB_USE_XO
     struct clk                                *clk;
-#endif
     struct platform_device                    *pdev;
 #ifdef FEATURE_DMB_USE_BUS_SCALE
     struct msm_bus_scale_pdata                *bus_scale_pdata;
@@ -75,6 +81,11 @@ struct tdmb_fc8080_ctrl_blk
     uint32                            dmb_irq;
 #ifdef CONFIG_MACH_MSM8926_VFP_KR
     uint32                            dmb_ant;
+#endif
+#if defined (CONFIG_MACH_MSM8992_PPLUS_KR)
+    uint32                            cs0;
+    uint32                            cs2;
+    uint32                            cs3;
 #endif
 };
 
@@ -93,6 +104,7 @@ static Device_drv device_fc8080 = {
     &broadcast_fc8080_drv_if_reset_ch,
     &broadcast_fc8080_drv_if_user_stop,
     &broadcast_fc8080_drv_if_select_antenna,
+    &broadcast_fc8080_drv_if_set_nation,
     &broadcast_fc8080_drv_if_is_on
 };
 
@@ -214,21 +226,24 @@ int tdmb_fc8080_power_on_retry(void)
     for(i = 0 ; i < 10; i++)
     {
         printk("[FC8080] tdmb_fc8080_power_on_retry :  %d\n", i);
-#ifdef FEATURE_DMB_USE_XO
+
+        if(dmb_use_xo) {
         if(fc8080_ctrl_info.clk != NULL) {
             clk_disable_unprepare(fc8080_ctrl_info.clk);
             printk("[FC8080] retry clk_disable %d\n", i);
         }
         else
             printk("[FC8080] ERR fc8080_ctrl_info.clkdis is NULL\n");
-#endif
+        }
+
         gpio_set_value(fc8080_ctrl_info.dmb_en, 0);
         mdelay(150);
 
 
         gpio_set_value(fc8080_ctrl_info.dmb_en, 1);
         mdelay(5);
-#ifdef FEATURE_DMB_USE_XO
+
+        if(dmb_use_xo) {
         if(fc8080_ctrl_info.clk != NULL) {
             res = clk_prepare_enable(fc8080_ctrl_info.clk);
             if (res) {
@@ -237,7 +252,8 @@ int tdmb_fc8080_power_on_retry(void)
         }
         else
             printk("[FC8080] ERR fc8080_ctrl_info.clken is NULL\n");
-#endif
+        }
+
         mdelay(30);
 
         res = bbm_com_probe(NULL);
@@ -270,7 +286,8 @@ int tdmb_fc8080_power_on(void)
 #ifdef FEATURE_DMB_USE_BUS_SCALE
         msm_bus_scale_client_update_request(fc8080_ctrl_info.bus_scale_client_id, 1); /* expensive call, index:1 is the <84 512 3000 152000> entry */
 #endif
-#ifdef FEATURE_DMB_USE_XO
+
+    if(dmb_use_xo) {
         if(fc8080_ctrl_info.clk != NULL) {
             rc = clk_prepare_enable(fc8080_ctrl_info.clk);
             if (rc) {
@@ -280,7 +297,8 @@ int tdmb_fc8080_power_on(void)
                 return rc;
             }
         }
-#endif
+    }
+
 #ifdef FEATURE_DMB_USE_PM_QOS
         if(pm_qos_request_active(&fc8080_ctrl_info.pm_req_list)) {
             pm_qos_update_request(&fc8080_ctrl_info.pm_req_list, 20);
@@ -316,11 +334,11 @@ int tdmb_fc8080_power_off(void)
     {
         tdmb_fc8080_interrupt_lock();
 
-#ifdef FEATURE_DMB_USE_XO
+        if(dmb_use_xo) {
         if(fc8080_ctrl_info.clk != NULL) {
             clk_disable_unprepare(fc8080_ctrl_info.clk);
         }
-#endif
+        }
 
         fc8080_ctrl_info.TdmbPowerOnState = FALSE;
 
@@ -563,6 +581,37 @@ static int tdmb_configure_gpios(void)
         printk("%s:Failed GPIO DMB_INT_N request!!!\n",__func__);
     }
 
+#if defined (CONFIG_MACH_MSM8992_PPLUS_KR)
+    fc8080_ctrl_info.cs0 = of_get_named_gpio(fc8080_ctrl_info.pdev->dev.of_node,"tdmb-fc8080,cs0",0);
+
+    rc = gpio_request(fc8080_ctrl_info.cs0, "DMB_CS0");
+    if (rc < 0) {
+        err_count++;
+        printk("%s:Failed GPIO DMB_CS0 request!!!\n",__func__);
+    }
+    gpio_direction_output(fc8080_ctrl_info.cs0, 0);
+
+    fc8080_ctrl_info.cs2 = of_get_named_gpio(fc8080_ctrl_info.pdev->dev.of_node,"tdmb-fc8080,cs2",0);
+
+    rc = gpio_request(fc8080_ctrl_info.cs2, "DMB_CS2");
+    if (rc < 0) {
+        err_count++;
+        printk("%s:Failed GPIO DMB_CS2 request!!!\n",__func__);
+    }
+    gpio_direction_output(fc8080_ctrl_info.cs2, 1);
+
+    fc8080_ctrl_info.cs3 = of_get_named_gpio(fc8080_ctrl_info.pdev->dev.of_node,"tdmb-fc8080,cs3",0);
+
+    rc = gpio_request(fc8080_ctrl_info.cs3, "DMB_CS3");
+    if (rc < 0) {
+        err_count++;
+        printk("%s:Failed GPIO DMB_CS3 request!!!\n",__func__);
+    }
+    gpio_direction_output(fc8080_ctrl_info.cs3, 0);
+
+    printk("[dbg] cs0   %d   /  cs2   %d   / cs3  %d\n", fc8080_ctrl_info.cs0,fc8080_ctrl_info.cs2,fc8080_ctrl_info.cs3);
+#endif
+
 #ifdef CONFIG_MACH_MSM8926_VFP_KR
     fc8080_ctrl_info.dmb_ant = of_get_named_gpio(fc8080_ctrl_info.pdev->dev.of_node,"tdmb-fc8080,ant-gpio",0);
 
@@ -599,6 +648,29 @@ static int broadcast_tdmb_fc8080_probe(struct spi_device *spi)
     fc8080_ctrl_info.spi_ptr->max_speed_hz     = (15000*1000);
     fc8080_ctrl_info.pdev = to_platform_device(&spi->dev);
 
+#if defined (CONFIG_MACH_MSM8992_PPLUS_KR)
+    if(lge_get_board_revno() < HW_REV_0)
+    {
+        fc8080_ctrl_info.spi_ptr->chip_select = 0;
+    }
+    else
+    {
+        fc8080_ctrl_info.spi_ptr->chip_select = 3;
+    }
+
+    if(lge_get_board_revno() < HW_REV_A)
+    {
+        dmb_use_xo = true;
+    }
+    else
+    {
+        dmb_use_xo = false;
+    }
+    printk("rev no(%d) & chip_select(%d) & dmb_use_xo(%d)\n", lge_get_board_revno(), fc8080_ctrl_info.spi_ptr->chip_select, dmb_use_xo);
+ #else
+    dmb_use_xo = true;
+#endif
+
 #ifdef FEATURE_DMB_USE_BUS_SCALE
     fc8080_ctrl_info.bus_scale_pdata = msm_bus_cl_get_pdata(fc8080_ctrl_info.pdev);
     fc8080_ctrl_info.bus_scale_client_id = msm_bus_scale_register_client(fc8080_ctrl_info.bus_scale_pdata);
@@ -610,7 +682,7 @@ static int broadcast_tdmb_fc8080_probe(struct spi_device *spi)
     printk("broadcast_tdmb_fc8080_probe spi_setup=%d\n", rc);
     bbm_com_hostif_select(NULL, 1);
 
-#ifdef FEATURE_DMB_USE_XO
+    if(dmb_use_xo) {
     fc8080_ctrl_info.clk = clk_get(&fc8080_ctrl_info.spi_ptr->dev, "tdmb_xo");
     if (IS_ERR(fc8080_ctrl_info.clk)) {
         rc = PTR_ERR(fc8080_ctrl_info.clk);
@@ -625,7 +697,7 @@ static int broadcast_tdmb_fc8080_probe(struct spi_device *spi)
         return rc;
     }
     clk_disable_unprepare(fc8080_ctrl_info.clk);
-#endif
+    }
 
 #ifdef FEATURE_DMB_USE_WORKQUEUE
     INIT_WORK(&fc8080_ctrl_info.spi_work, broacast_tdmb_spi_work);

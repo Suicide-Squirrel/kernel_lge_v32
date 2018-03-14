@@ -1861,7 +1861,7 @@ static int diag_process_dci_pkt_rsp(unsigned char *buf, int len)
 				 */
 
 /* [VZW][OBDM] Temporary fix "mode change cmd(0x29) issue." */
-#ifdef CONFIG_MACH_MSM8992_P1
+#if defined(CONFIG_MACH_MSM8992_P1) || defined(CONFIG_MACH_MSM8992_PPLUS) || defined(CONFIG_MACH_MSM8992_P1A4WP)
 #define MODE_RESET 2
 
 				if (entry.cmd_code_lo == MODE_CMD &&
@@ -2117,13 +2117,13 @@ struct diag_dci_client_tbl *diag_dci_get_client_entry(int client_id)
 	return NULL;
 }
 
-struct diag_dci_client_tbl *dci_lookup_client_entry_pid(int pid)
+struct diag_dci_client_tbl *dci_lookup_client_entry_pid(int tgid)
 {
 	struct list_head *start, *temp;
 	struct diag_dci_client_tbl *entry = NULL;
 	list_for_each_safe(start, temp, &driver->dci_client_list) {
 		entry = list_entry(start, struct diag_dci_client_tbl, track);
-		if (entry->client->tgid == pid)
+		if (entry->client->tgid == tgid)
 			return entry;
 	}
 	return NULL;

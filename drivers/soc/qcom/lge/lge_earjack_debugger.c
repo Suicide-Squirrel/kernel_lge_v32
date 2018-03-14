@@ -28,6 +28,10 @@
 
 struct earjack_debugger_device {
 	int gpio;
+#ifdef CONFIG_SND_SOC_ES9018
+	int hph;
+	int power;
+#endif
 	int irq;
 	int saved_detect;
 	int (*set_uart_console)(int enable);
@@ -35,6 +39,10 @@ struct earjack_debugger_device {
 
 struct earjack_debugger_platform_data {
 	int gpio_trigger;
+#ifdef CONFIG_SND_SOC_ES9018
+	int hph_switch;
+	int power_gpio;
+#endif
 };
 
 static int earjack_debugger_detected(void *dev)
@@ -66,12 +74,20 @@ static irqreturn_t earjack_debugger_irq_handler(int irq, void *_dev)
 	if (detect) {
 		pr_debug("%s() : in!!\n", __func__);
 		printk(KERN_INFO "%s() : in!!\n", __func__);
+#ifdef CONFIG_SND_SOC_ES9018
+		gpio_set_value(adev->power, 1);
+		gpio_set_value(adev->hph, 1);
+#endif
 		adev->set_uart_console(
 			lge_uart_console_should_enable_on_earjack_debugger());
 	} else {
 		/* restore uart console status to default mode */
 		pr_debug("%s() : out!!\n", __func__);
 		printk(KERN_INFO "%s() : out!!\n", __func__);
+#ifdef CONFIG_SND_SOC_ES9018
+		gpio_set_value(adev->power, 0);
+		gpio_set_value(adev->hph, 0);
+#endif
 		adev->set_uart_console(
 				lge_uart_console_should_enable_on_default());
 	}
@@ -82,9 +98,13 @@ static irqreturn_t earjack_debugger_irq_handler(int irq, void *_dev)
 static void earjack_debugger_parse_dt(struct device *dev,
 		struct earjack_debugger_platform_data *pdata)
 {
-	struct device_node *np = dev->of_node;
-	pdata->gpio_trigger = of_get_named_gpio_flags(np, "serial,irq-gpio",
+        struct device_node *np = dev->of_node;
+        pdata->gpio_trigger = of_get_named_gpio_flags(np, "serial,irq-gpio",
 			0, NULL);
+#ifdef CONFIG_SND_SOC_ES9018
+        pdata->hph_switch = of_get_named_gpio_flags(np, "serial,hph-sw", 0, NULL);
+        pdata->power_gpio = of_get_named_gpio_flags(np, "serial,power-gpio", 0, NULL);
+#endif
 }
 
 static int earjack_debugger_probe(struct platform_device *pdev)
@@ -121,6 +141,10 @@ static int earjack_debugger_probe(struct platform_device *pdev)
 	}
 
 	adev->gpio = pdata->gpio_trigger;
+#ifdef CONFIG_SND_SOC_ES9018
+	adev->hph = pdata->hph_switch;
+	adev->power = pdata->power_gpio;
+#endif
 	adev->irq = gpio_to_irq(pdata->gpio_trigger);
 	adev->set_uart_console = msm_serial_set_uart_console;
 

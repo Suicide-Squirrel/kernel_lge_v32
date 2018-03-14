@@ -22,6 +22,7 @@ enum{
 /* Debug intent */
 /* #define FELICA_INTENT "my.andr.u5/.FeliCaTest" */
 #define FELICA_INTENT "com.felicanetworks.mfc/com.felicanetworks.adhoc.AdhocReceiver"
+#define ANDRO_DATA "ANDROID_DATA=/data"
 
 /*
  *    INTERNAL DEFINITION
@@ -38,15 +39,17 @@ static DECLARE_DELAYED_WORK(felica_int_work, felica_int_low_work);
 /*
  *    FUNCTION DEFINITION
  */
+
 static int invoke_felica_apk(void)
 {
-  char *argv[] = { "/system/bin/sh","/system/bin/am", "start", "-n", FELICA_INTENT, "--activity-clear-top", NULL };
+  //char *argv[] = { "/system/bin/sh","/system/bin/am", "start", "-n", FELICA_INTENT, "--activity-clear-top", NULL };
+  char *argv[] = { "/system/bin/am", "start", "-n", FELICA_INTENT, "--activity-clear-top", NULL };
 
   //static char *envp[] = {FELICA_LD_LIBRARY_PATH,FELICA_BOOTCLASSPATH,FELICA_PATH,NULL };
-  static char *envp[] = {FELICA_PATH, NULL };
+  static char *envp[] = {FELICA_PATH, ANDRO_DATA, NULL };
   int rc = 0;
 
-  FELICA_DEBUG_MSG_HIGH("[FELICA_RWS] invoke felica app... \n");
+  FELICA_DEBUG_MSG_HIGH("[FELICA_RWS] invoke felica app... no-shell ver. \n");
 
   rc = call_usermodehelper( argv[0], argv, envp, UMH_WAIT_EXEC );
 

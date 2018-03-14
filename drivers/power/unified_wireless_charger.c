@@ -46,9 +46,10 @@
 struct unified_wlc_chip {
 	struct device        *dev;
 	struct power_supply  *psy_ext;
-	struct power_supply	*psy_batt;
-	struct power_supply	*dc_psy;
+	struct power_supply  *psy_batt;
+	struct power_supply  *dc_psy;
 	struct power_supply   wireless_psy;
+	struct delayed_work   wireless_boot_check_work;
 	struct delayed_work   wireless_interrupt_work;
 	struct delayed_work   wireless_set_online_work;
 	struct delayed_work   wireless_set_offline_work;
@@ -64,6 +65,7 @@ struct unified_wlc_chip {
 	int					enabled;
 	bool				wlc_state;
 	struct mutex	wlc_rx_off_lock;
+	bool			wlc_rx_enabled;
 #ifdef CONFIG_LGE_PM_UNIFIED_WLC_ALIGNMENT
 	struct mutex align_lock;
 	unsigned int align_values;
@@ -214,9 +216,10 @@ static void wireless_align_work(struct work_struct *work)
 	}
 
 	chip->psy_batt = power_supply_get_by_name("battery");
-
-	if (!chip->psy_batt)
+	if (!chip->psy_batt) {
+	        pr_err("Battery supply not found, deferring probe\n");
 		return;
+	}
 
 	chip->psy_batt->get_property(chip->psy_batt, POWER_SUPPLY_PROP_CAPACITY, &ret);
 	battery_capacity = ret.intval;
@@ -236,109 +239,6 @@ check_status:
 					msecs_to_jiffies(WLC_ALIGN_INTERVAL));
 }
 #endif
-
-static int pm_power_get_property_wireless(struct power_supply *psy,
-					 enum power_supply_property psp,
-					 union power_supply_propval *val)
-{
-	struct unified_wlc_chip *chip =
-			container_of(psy, struct unified_wlc_chip, wireless_psy);
-
-	struct power_supply *dc_psy;
-	struct power_supply *usb_psy;
-	union power_supply_propval wlc_ret = {0,};
-	int usb_present = 0;
-	int dc_present = 0;
-
-	dc_psy = power_supply_get_by_name("dc");
-	dc_psy->get_property(dc_psy, POWER_SUPPLY_PROP_PRESENT, &wlc_ret);
-	dc_present = wlc_ret.intval;
-
-	usb_psy = power_supply_get_by_name("usb");
-	usb_psy->get_property(usb_psy, POWER_SUPPLY_PROP_PRESENT, &wlc_ret);
-	usb_present = wlc_ret.intval;
-
-	switch (psp) {
-	case POWER_SUPPLY_PROP_PRESENT:
-		dc_psy->get_property(dc_psy, POWER_SUPPLY_PROP_PRESENT, &wlc_ret);
-		val->intval = wlc_ret.intval;
-		break;
-	case POWER_SUPPLY_PROP_ONLINE:
-		dc_psy->get_property(dc_psy, POWER_SUPPLY_PROP_ONLINE, &wlc_ret);
-		val->intval = wlc_ret.intval;
-		if (!gpio_init_check)
-			break;
-		if (usb_present && dc_present) {
-			if (!val->intval) {
-				mutex_lock(&chip->wlc_rx_off_lock);
-				gpio_set_value(chip->wlc_rx_off, 1);
-				msleep(100);
-				gpio_set_value(chip->wlc_rx_off, 0);
-				mutex_unlock(&chip->wlc_rx_off_lock);
-			}
-		}
-		break;
-#ifdef CONFIG_LGE_PM_UNIFIED_WLC_ALIGNMENT
-	case POWER_SUPPLY_PROP_ALIGNMENT:
-		if (unlikely(!wireless_charging)) {
-			val->intval = 0;
-		} else {
-			if (chip->align_values == 0) {
-				mutex_lock(&chip->align_lock);
-				wireless_align_get_value(chip);
-				mutex_unlock(&chip->align_lock);
-			}
-			val->intval = chip->align_values;
-		}
-		break;
-#endif
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-static int pm_power_set_event_property_wireless(struct power_supply *psy,
-					enum power_supply_event_type psp,
-					const union power_supply_propval *val)
-{
-	struct unified_wlc_chip *chip =
-		container_of(psy, struct unified_wlc_chip, wireless_psy);
-
-	switch(psp){
-	case POWER_SUPPLY_PROP_WIRELESS_CHARGE_COMPLETED:
-		pr_info("[WLC] ask POWER_SUPPLY_PROP_WIRELESS_CHARGE_COMPLETED\n");
-		schedule_delayed_work(&chip->wireless_eoc_work,
-			round_jiffies_relative(msecs_to_jiffies(2000)));
-		break;
-	default:
-		return -EINVAL;
-	}
-	return 0;
-
-}
-
-static int pm_power_get_event_property_wireless(struct power_supply *psy,
-					enum power_supply_event_type psp,
-					union power_supply_propval *val)
-{
-	struct unified_wlc_chip *chip =
-		container_of(psy, struct unified_wlc_chip, wireless_psy);
-
-	switch(psp){
-	case POWER_SUPPLY_PROP_WIRELESS_ONLINE:
-		if(likely(chip)){
-			val->intval = is_wireless_charger_plugged_internal(chip);
-			pr_info("[WLC] POWER_SUPPLY_PROP_WIRELESS_ONLINE :%d\n", val->intval);
-		}
-		break;
-	default:
-		return -EINVAL;
-	}
-	return 0;
-}
-
 
 static void wireless_set_online_work(struct work_struct *work)
 {
@@ -379,10 +279,17 @@ static void wireless_set_offline_work(struct work_struct *work)
 	wlc = is_wireless_charger_plugged_internal(chip);
 
 	chip->psy_batt = power_supply_get_by_name("battery");
-
-	if (!chip->psy_batt)
+	if (!chip->psy_batt) {
+		pr_err("Battery supply not found, deferring probe\n");
 		return;
+	}
+
 	usb_psy = power_supply_get_by_name("usb");
+	if (!usb_psy) {
+		pr_err("USB supply not found, deferring probe\n");
+		return;
+	}
+
 	usb_psy->get_property(usb_psy, POWER_SUPPLY_PROP_ONLINE, &ret);
 	usb_present = ret.intval;
 
@@ -439,7 +346,7 @@ static void wireless_removed(struct unified_wlc_chip *chip)
 		round_jiffies_relative(msecs_to_jiffies(500)));
 }
 
-static void wireless_interrupt_worker(struct work_struct *work)
+static void wireless_interrupt_work(struct work_struct *work)
 {
 	struct unified_wlc_chip *chip =
 		container_of(work, struct unified_wlc_chip,
@@ -458,13 +365,14 @@ void wireless_interrupt_handler(bool dc_present)
 
 	chip->wlc_state = dc_present;
 	chg_state = is_wireless_charger_plugged_internal(chip);
-	if (chg_state)
 
+	if (chg_state)
 		pr_info("[WLC] I'm on the WLC PAD\n");
 	else
 		pr_info("[WLC] I'm NOT on the WLC PAD\n");
 
-	schedule_delayed_work(&chip->wireless_interrupt_work, round_jiffies_relative(msecs_to_jiffies(100)));
+	schedule_delayed_work(&chip->wireless_interrupt_work,
+		round_jiffies_relative(msecs_to_jiffies(100)));
 
 	return;
 }
@@ -479,6 +387,10 @@ void wireless_chg_term_handler(void)
 	union power_supply_propval wlc_ret = {0,};
 
 	dc_psy = power_supply_get_by_name("battery");
+	if (!dc_psy) {
+		pr_err("DC supply not found, deferring probe\n");
+		return;
+	}
 
 	dc_psy->get_property(dc_psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &wlc_ret);
 	chg_type = wlc_ret.intval;
@@ -507,6 +419,134 @@ void wireless_chg_term_handler(void)
 	return;
 }
 
+static int pm_power_get_property_wireless(struct power_supply *psy,
+					 enum power_supply_property psp,
+					 union power_supply_propval *val)
+{
+	struct unified_wlc_chip *chip =
+			container_of(psy, struct unified_wlc_chip, wireless_psy);
+
+	struct power_supply *dc_psy;
+	struct power_supply *usb_psy;
+	union power_supply_propval wlc_ret = {0,};
+	int usb_present = 0;
+	int dc_present = 0;
+
+	dc_psy = power_supply_get_by_name("dc");
+	if(!dc_psy) {
+		pr_err("DC supply not found, deferring probe\n");
+		return -EPROBE_DEFER;
+	}
+
+	dc_psy->get_property(dc_psy, POWER_SUPPLY_PROP_PRESENT, &wlc_ret);
+	dc_present = wlc_ret.intval;
+
+	usb_psy = power_supply_get_by_name("usb");
+	if (!usb_psy) {
+		pr_err("USB supply not found, deferring probe\n");
+		return -EPROBE_DEFER;
+	}
+
+	usb_psy->get_property(usb_psy, POWER_SUPPLY_PROP_PRESENT, &wlc_ret);
+	usb_present = wlc_ret.intval;
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_PRESENT:
+		dc_psy->get_property(dc_psy, POWER_SUPPLY_PROP_PRESENT, &wlc_ret);
+		val->intval = wlc_ret.intval;
+		break;
+	case POWER_SUPPLY_PROP_ONLINE:
+		dc_psy->get_property(dc_psy, POWER_SUPPLY_PROP_ONLINE, &wlc_ret);
+		val->intval = wlc_ret.intval;
+		if (!gpio_init_check)
+			break;
+		if (usb_present && dc_present) {
+			if (!val->intval) {
+				mutex_lock(&chip->wlc_rx_off_lock);
+				gpio_set_value(chip->wlc_rx_off, 1);
+				mutex_unlock(&chip->wlc_rx_off_lock);
+				chip->wlc_rx_enabled = 0;
+			}
+		}
+
+		if ((chip->wlc_rx_enabled == 0) && (usb_present == 0)) {
+			mutex_lock(&chip->wlc_rx_off_lock);
+			gpio_set_value(chip->wlc_rx_off, 0);
+			mutex_unlock(&chip->wlc_rx_off_lock);
+			chip->wlc_rx_enabled = 1;
+		}
+
+		break;
+#ifdef CONFIG_LGE_PM_UNIFIED_WLC_ALIGNMENT
+	case POWER_SUPPLY_PROP_ALIGNMENT:
+		if (unlikely(!wireless_charging)) {
+			val->intval = 0;
+		} else {
+			if (chip->align_values == 0) {
+				mutex_lock(&chip->align_lock);
+				wireless_align_get_value(chip);
+				mutex_unlock(&chip->align_lock);
+			}
+			val->intval = chip->align_values;
+		}
+		break;
+#endif
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int pm_power_set_event_property_wireless(struct power_supply *psy,
+					enum power_supply_event_type psp,
+					const union power_supply_propval *val)
+{
+	struct unified_wlc_chip *chip =
+		container_of(psy, struct unified_wlc_chip, wireless_psy);
+
+	switch(psp){
+	case POWER_SUPPLY_PROP_WIRELESS_INTERRUPT:
+		pr_info("[WLC] POWER_SUPPLY_PROP_WIRELESS_INTERRUPT : wireless present = %d\n",
+			val->intval);
+		wireless_interrupt_handler(val->intval);
+		break;
+	case POWER_SUPPLY_PROP_WIRELESS_CHG_TERM:
+		pr_info("[WLC] POWER_SUPPLY_PROP_WIRELESS_CHG_TERM");
+		wireless_chg_term_handler();
+		break;
+	case POWER_SUPPLY_PROP_WIRELESS_CHARGE_COMPLETED:
+		pr_info("[WLC] ask POWER_SUPPLY_PROP_WIRELESS_CHARGE_COMPLETED\n");
+		schedule_delayed_work(&chip->wireless_eoc_work,
+			round_jiffies_relative(msecs_to_jiffies(2000)));
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+
+}
+
+static int pm_power_get_event_property_wireless(struct power_supply *psy,
+					enum power_supply_event_type psp,
+					union power_supply_propval *val)
+{
+	struct unified_wlc_chip *chip =
+		container_of(psy, struct unified_wlc_chip, wireless_psy);
+
+	switch(psp){
+	case POWER_SUPPLY_PROP_WIRELESS_ONLINE:
+		if(likely(chip)){
+			val->intval = is_wireless_charger_plugged_internal(chip);
+			pr_info("[WLC] POWER_SUPPLY_PROP_WIRELESS_ONLINE :%d\n", val->intval);
+		}
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
 static void wireless_eoc_work(struct work_struct *work)
 {
 	struct unified_wlc_chip *chip = container_of(work,
@@ -521,6 +561,26 @@ static void wireless_eoc_work(struct work_struct *work)
 	pr_info("[WLC] Re-enable RX!!\n");
 
 	wake_unlock(&chip->wireless_eoc_wake_lock);
+}
+
+static void wireless_boot_check_work(struct work_struct *work)
+{
+	struct unified_wlc_chip *chip =
+		container_of(work, struct unified_wlc_chip,
+			 wireless_boot_check_work.work);
+	union power_supply_propval ret = {0,};
+
+	chip->wireless_psy.get_property(&(chip->wireless_psy),
+		POWER_SUPPLY_PROP_PRESENT, &ret);
+	if (ret.intval) {
+		pr_info("[WLC] I'm on WLC PAD during booting\n");
+#if defined(CONFIG_LGE_TOUCH_CORE)
+	printk("[Touch] notify from WLC to Touch during booting\n");
+	touch_notify_wireless(1);
+#endif
+		chip->wireless_psy.set_event_property(&(chip->wireless_psy),
+			POWER_SUPPLY_PROP_WIRELESS_INTERRUPT, &ret);
+	}
 }
 
 static int unified_wlc_hw_init(struct unified_wlc_chip *chip)
@@ -542,6 +602,7 @@ static int unified_wlc_hw_init(struct unified_wlc_chip *chip)
 		pr_err("[WLC] failed to request gpio wlc_rx_off\n");
 		goto err_request_gpio1_failed;
 	}
+	chip->wlc_rx_enabled = 1;
 
 	return 0;
 /*
@@ -602,7 +663,6 @@ static int unified_wlc_probe(struct platform_device *pdev)
 	}
 
 	/*Read platform data from dts file*/
-
 	pdata = devm_kzalloc(&pdev->dev,
 					sizeof(struct unified_wlc_platform_data),
 					GFP_KERNEL);
@@ -621,7 +681,8 @@ static int unified_wlc_probe(struct platform_device *pdev)
 	chip = kzalloc(sizeof(struct unified_wlc_chip), GFP_KERNEL);
 	if (!chip) {
 		pr_err("[WLC] %s : Cannot allocate unified_wlc_chip\n", __func__);
-		return -ENOMEM;
+		rc = -ENOMEM;
+		goto free_chip;
 	}
 
 	chip->dev = &pdev->dev;
@@ -648,10 +709,12 @@ static int unified_wlc_probe(struct platform_device *pdev)
 	chip->dc_psy = power_supply_get_by_name("dc");
 	if (!chip->dc_psy) {
 		pr_err("dc supply not found.\n");
-		return -ENODEV;
+		rc = -ENODEV;
+		goto free_chip;
 	}
 
-	INIT_DELAYED_WORK(&chip->wireless_interrupt_work, wireless_interrupt_worker);
+	INIT_DELAYED_WORK(&chip->wireless_boot_check_work, wireless_boot_check_work);
+	INIT_DELAYED_WORK(&chip->wireless_interrupt_work, wireless_interrupt_work);
 	INIT_DELAYED_WORK(&chip->wireless_set_online_work, wireless_set_online_work);
 	INIT_DELAYED_WORK(&chip->wireless_set_offline_work, wireless_set_offline_work);
 	INIT_DELAYED_WORK(&chip->wireless_eoc_work, wireless_eoc_work);
@@ -681,17 +744,13 @@ static int unified_wlc_probe(struct platform_device *pdev)
 
 	the_chip = chip;
 
-	/* For Booting Wireless_charging and For Power Charging Logo
-	 * In Wireless Charging
-	 */
-	if (is_wireless_charger_plugged_internal(chip)) {
-		pr_info("[WLC] I'm on WLC PAD during booting\n ");
-		wireless_inserted(chip);
-	}
-	/*else
-		wireless_removed(chip);*/
+	/* For boot wireless charging or chargerlogo wireless charging */
+	schedule_delayed_work(&chip->wireless_boot_check_work,
+		round_jiffies_relative(msecs_to_jiffies(100)));
+
 	chip->enabled = 0;
 	gpio_init_check = true;
+
 	pr_info("[WLC] probe done\n");
 	return 0;
 free_chip:
@@ -742,7 +801,7 @@ static void __exit unified_wlc_exit(void)
 	platform_driver_unregister(&unified_wlc_driver);
 }
 
-late_initcall(unified_wlc_init);
+module_init(unified_wlc_init);
 module_exit(unified_wlc_exit);
 
 MODULE_AUTHOR("Kyungtae Oh <Kyungtae.oh@lge.com>");

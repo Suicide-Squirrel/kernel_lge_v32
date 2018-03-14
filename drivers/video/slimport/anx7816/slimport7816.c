@@ -52,6 +52,11 @@ int external_block_en = 0;
 
 static bool irq_enable;
 
+/* Flag of Regulator On/Off */
+/* regulator_flag = 1: enable, 0: disable */
+static bool regulator_flag;
+
+
 /* to access global platform data */
 static struct anx7816_platform_data *g_pdata;
 
@@ -211,16 +216,21 @@ static int slimport7816_dvdd_power(unsigned int onoff)
 
 /* To do : regulator control after H/W change */
 
-	if (onoff) {
+	if (onoff && !regulator_flag) {
 		pr_err("%s %s: dvdd power on\n", LOG_TAG, __func__);
 		rc = regulator_enable(pdata->dvdd_10);
+		regulator_flag = 1;
 		if (rc < 0) {
 			pr_err("%s %s: failed to enable dvdd regulator rc=%d\n",
 				   LOG_TAG, __func__, rc);
+			regulator_flag = 0;
 		}
-	} else {
+	} else if(!onoff && regulator_flag){
 			pr_err("%s %s: dvdd power off\n", LOG_TAG, __func__);
 			rc = regulator_disable(pdata->dvdd_10);
+			regulator_flag = 0;
+	}else{
+		pr_err("%s %s: invalid regulator control\n", LOG_TAG, __func__);
 	}
 
 	return rc;
@@ -1491,7 +1501,8 @@ static int anx7816_i2c_probe(struct i2c_client *client,
 							 GFP_KERNEL);
 		if (!pdata) {
 			pr_err("%s: Failed to allocate memory\n", __func__);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto err0;
 		}
 		client->dev.platform_data = pdata;
 	/* device tree parsing function call */

@@ -44,6 +44,7 @@
 		qcom,mdss-dsi-bllp-power-mode;
 		qcom,cmd-sync-wait-broadcast;
 		qcom,cmd-sync-wait-trigger;
+
 		qcom,cont-splash-enabled;
 		qcom,mdss-dsi-lane-0-state;
 		qcom,mdss-dsi-lane-1-state;
@@ -65,7 +66,7 @@
 		qcom,mdss-dsi-te-dcs-command = <1>;
 		qcom,mdss-dsi-te-check-enable;
 		qcom,mdss-dsi-te-using-te-pin;
-		qcom,ulps-enabled;
+		qcom,suspend-ulps-enabled;
 		qcom,mdss-dsi-lp11-init;
 		/* Partial update */
 		//qcom,partial-update-enabled;
@@ -275,6 +276,25 @@
 		];
 		/* SRE cmds set END*/
 
+		lgd,rsp-write-nvm = [
+			29 01 00 00 00 00 02 B0 04
+			29 01 00 00 00 00 02 E8 01
+
+			39 01 00 00 00 00 07
+			A1 01 24 FF FF FF FF //LGD is written 1st:01, 2nd:24, others : don't care
+
+			29 01 00 00 00 00 02 D6 81
+			29 01 00 00 00 00 02 E3 BF
+
+			39 01 00 00 00 00 02 35 00
+
+			29 01 00 00 00 00 05
+			E0 11 00 00 40
+
+			29 01 00 00 00 00 05
+			E0 00 00 00 00
+		];
+
 		qcom,blmap-size = <256>;
 		qcom,blmap = <
 			  0
@@ -336,5 +356,32 @@
 		>;
 		qcom,mdss-pan-physical-width-dimension = <68>;
 		qcom,mdss-pan-physical-height-dimension = <121>;
+
+		lge,panel_power_sequence = <
+			0    /*pre_msm_dss_enable_vreg*/
+			0    /*post_msm_dss_enable_vreg*/
+			0    /*pre_mdss_dsi_panel_reset*/
+			0    /*post_mdss_dsi_panel_reset*/
+			1    /*pre_mdss_dsi_panel_power_ctrl*/
+			1    /*post_mdss_dsi_panel_power_ctrl*/
+			0    /*post_mdss_dsi_blank*/
+			1    /*post_mdss_dsi_panel_on*/
+			0    /*post_mdss_dsi_panel_off*/
+			1    /*lge_mdss_dsi_event_handler*/
+			1    /*lge_msm_dss_enable_vreg*/
+			1    /*lge_mdss_dsi_request_gpios*/
+			1    /*lge_mdss_dsi_panel_reset*/
+			0    /*lge_mdss_dsi_lane_config*/
+			1    /*lge_mdss_dsi_ctrl_probe*/
+			1    /*lge_dsi_panel_device_register*/
+			1    /*lge_mdss_panel_parse_dt*/
+			0    /*lge_panel_device_create*/
+			1    /*lge_mdss_dsi_cmdlist_commit*/
+			1    /*lge_mdss_dsi_panel_init*/
+			1    /*lge_dump_mdss_reg*/
+			1    /*lge_mdss_xlog_tout_handler_default*/
+			0    /*lge_mdss_create_xlog_debug*/
+			1    /*lge_mdss_dsi_panel_bl_ctrl*/
+			>;
 	};
 };

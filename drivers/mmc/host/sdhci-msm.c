@@ -104,6 +104,11 @@ enum sdc_mpm_pin_state {
 #define CORE_HC_SELECT_IN_HS400	(6 << 19)
 #define CORE_HC_SELECT_IN_MASK	(7 << 19)
 
+#define CORE_VENDOR_SPEC_FUNC2 0x110
+#define HC_SW_RST_WAIT_IDLE_DIS	(1 << 20)
+#define HC_SW_RST_REQ (1 << 21)
+#define CORE_ONE_MID_EN     (1 << 25)
+
 #define CORE_VENDOR_SPEC_CAPABILITIES0	0x11C
 #define CORE_8_BIT_SUPPORT		(1 << 18)
 #define CORE_3_3V_SUPPORT		(1 << 24)
@@ -232,6 +237,10 @@ static const u32 tuning_block_128[] = {
 static int disable_slots;
 /* root can write, others read */
 module_param(disable_slots, int, S_IRUGO|S_IWUSR);
+
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+bool attempt_cdr_unlock;
+#endif
 
 /* This structure keeps information per regulator */
 struct sdhci_msm_reg_data {
@@ -650,8 +659,15 @@ static int msm_find_most_appropriate_phase(struct sdhci_host *host,
 	}
 
 	i = ((curr_max * 3) / 4);
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	if (i > 1)
+		i-=2;
+	else if(i == 1)
+		i--;
+#else
 	if (i)
 		i--;
+#endif
 
 	ret = (int)ranges[selected_row_index][i];
 
@@ -1028,6 +1044,22 @@ static void sdhci_msm_set_mmc_drv_type(struct sdhci_host *host, u32 opcode,
 			drv_type);
 }
 
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+static uint32_t find_phase(uint32_t cdr_select)
+{
+	uint32_t gray_code [] = { 0x0, 0x1, 0x3, 0x2, 0x6, 0x7, 0x5, 0x4, 0xC, 0xD, 0xF, 0xE, 0xA, 0xB, 0x9, 0x8 };
+	int i;
+	for(i=0; i<sizeof(gray_code); i++)
+	{
+		if(cdr_select==gray_code[i])
+		{
+			return i;
+		}
+	}
+	return 0; // fixme : set hard coded good-phase
+}
+#endif
+
 int sdhci_msm_execute_tuning(struct sdhci_host *host, u32 opcode)
 {
 	unsigned long flags;
@@ -1176,6 +1208,16 @@ retry:
 	if (drv_type_changed)
 		sdhci_msm_set_mmc_drv_type(host, opcode, 0);
 
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	if (((opcode == MMC_SEND_TUNING_BLOCK_HS400) ||
+		(opcode == MMC_SEND_TUNING_BLOCK_HS200)) &&
+		(tuned_phase_cnt == MAX_PHASES))
+	{
+		attempt_cdr_unlock = true;
+		pr_info("[FS] %s: %s: WARNING: All phase passed.The selected phase may not be optimal\n", mmc_hostname(mmc), __func__);
+	}
+#endif
+
 	if (tuned_phase_cnt) {
 		rc = msm_find_most_appropriate_phase(host, tuned_phases,
 							tuned_phase_cnt);
@@ -1216,6 +1258,62 @@ retry:
 			mmc_hostname(mmc), __func__);
 		rc = -EIO;
 	}
+
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	/* retry additional tuning */
+	if(attempt_cdr_unlock) {
+		uint32_t retry_count=3;
+		uint32_t core_status;
+
+		do {
+			struct mmc_command cmd = {0};
+			struct mmc_data data = {0};
+			struct mmc_request mrq = {
+				.cmd = &cmd,
+				.data = &data
+			};
+			struct scatterlist sg;
+			cmd.opcode = opcode;
+			cmd.flags = MMC_RSP_R1 | MMC_CMD_ADTC;
+
+			data.blksz = size;
+			data.blocks = 1;
+			data.flags = MMC_DATA_READ;
+			data.timeout_ns = 1000 * 1000 * 1000; /* 1 sec */
+
+			data.sg = &sg;
+			data.sg_len = 1;
+			sg_init_one(&sg, data_buf, size);
+
+			memset(data_buf, 0, size);
+
+			core_status = readl_relaxed(host->ioaddr + CORE_DLL_STATUS);
+			pr_info("[FS] %s: %s: tuning retrying(try:%d) > CDR_PHASE(0x%x)\n", mmc_hostname(mmc), __func__, retry_count, find_phase( (core_status>>3) & 0xf ));
+			mmc_wait_for_req(mmc, &mrq);
+
+			if(!cmd.error && !data.error) {
+				core_status = readl_relaxed(host->ioaddr + CORE_DLL_STATUS);
+				msm_host->saved_tuning_phase = find_phase( (core_status>>3) & 0xf );
+				pr_info("[FS] %s: %s: tuning retried > CDR_PHASE(0x%x)\n", mmc_hostname(mmc), __func__, find_phase( (core_status>>3) & 0xf ));
+				break;
+			}
+
+			if (cmd.error) {
+				pr_debug("%s: %s: additional tuning cmd error(error(%d)/opcode(%d))\n", mmc_hostname(mmc), __func__, cmd.error,cmd.opcode);
+				usleep_range(1000, 1200);
+			}
+			if (data.error) {
+				pr_debug("%s: %s: additional tuning data error(error(%d)/opcode(%d))\n", mmc_hostname(mmc), __func__, data.error,cmd.opcode);
+			}
+
+			if(retry_count==1) {
+				pr_info("[FS] %s: %s: tuning retrying failed 3 times\n", mmc_hostname(mmc), __func__);
+			}
+		} while(--retry_count>0);
+
+		attempt_cdr_unlock = false;
+	}
+#endif
 
 kfree:
 	kfree(data_buf);
@@ -3033,6 +3131,48 @@ void sdhci_msm_dump_vendor_regs(struct sdhci_host *host)
 			CORE_TESTBUS_CONFIG);
 }
 
+void sdhci_msm_reset_workaround(struct sdhci_host *host, u32 enable)
+{
+	u32 vendor_func2;
+	unsigned long timeout;
+
+	vendor_func2 = readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC_FUNC2);
+
+	if (enable) {
+		writel_relaxed(vendor_func2 | HC_SW_RST_REQ, host->ioaddr +
+				CORE_VENDOR_SPEC_FUNC2);
+		timeout = 10000;
+		while (readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC_FUNC2) &
+				HC_SW_RST_REQ) {
+			if (timeout == 0) {
+				pr_info("%s: Applying wait idle disable workaround\n",
+					mmc_hostname(host->mmc));
+				/*
+				 * Apply the reset workaround to not wait for
+				 * pending data transfers on AXI before
+				 * resetting the controller. This could be
+				 * risky if the transfers were stuck on the
+				 * AXI bus.
+				 */
+				vendor_func2 = readl_relaxed(host->ioaddr +
+						CORE_VENDOR_SPEC_FUNC2);
+				writel_relaxed(vendor_func2 |
+					HC_SW_RST_WAIT_IDLE_DIS,
+					host->ioaddr + CORE_VENDOR_SPEC_FUNC2);
+				host->reset_wa_t = ktime_get();
+				return;
+			}
+			timeout--;
+			udelay(10);
+		}
+		pr_info("%s: waiting for SW_RST_REQ is successful\n",
+				mmc_hostname(host->mmc));
+	} else {
+		writel_relaxed(vendor_func2 & ~HC_SW_RST_WAIT_IDLE_DIS,
+				host->ioaddr + CORE_VENDOR_SPEC_FUNC2);
+	}
+}
+
 static struct sdhci_ops sdhci_msm_ops = {
 	.set_uhs_signaling = sdhci_msm_set_uhs_signaling,
 	.check_power_status = sdhci_msm_check_power_status,
@@ -3046,6 +3186,7 @@ static struct sdhci_ops sdhci_msm_ops = {
 	.dump_vendor_regs = sdhci_msm_dump_vendor_regs,
 	.config_auto_tuning_cmd = sdhci_msm_config_auto_tuning_cmd,
 	.enable_controller_clock = sdhci_msm_enable_controller_clock,
+	.reset_workaround = sdhci_msm_reset_workaround,
 };
 
 static int sdhci_msm_cfg_mpm_pin_wakeup(struct sdhci_host *host, unsigned mode)
@@ -3086,6 +3227,7 @@ static void sdhci_set_default_hw_caps(struct sdhci_msm_host *msm_host,
 	u32 version, caps;
 	u16 minor;
 	u8 major;
+	u32 val;
 
 	version = readl_relaxed(msm_host->core_mem + CORE_MCI_VERSION);
 	major = (version & CORE_VERSION_MAJOR_MASK) >>
@@ -3115,6 +3257,16 @@ static void sdhci_set_default_hw_caps(struct sdhci_msm_host *msm_host,
 			caps), host->ioaddr + CORE_VENDOR_SPEC_CAPABILITIES0);
 	}
 
+	/*
+	 * Enable one MID mode for SDCC5 (major 1) on 8916/8939 (minor 0x2e) and
+	 * on 8992 (minor 0x3e) as a workaround to reset for data stuck issue.
+	 */
+	if (major == 1 && (minor == 0x2e || minor == 0x3e)) {
+		host->quirks2 |= SDHCI_QUIRK2_USE_RESET_WORKAROUND;
+		val = readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC_FUNC2);
+		writel_relaxed((val | CORE_ONE_MID_EN),
+			host->ioaddr + CORE_VENDOR_SPEC_FUNC2);
+	}
 	/*
 	 * SDCC 5 controller with major version 1, minor version 0x34 and later
 	 * with HS 400 mode support will use CM DLL instead of CDC LP 533 DLL.
@@ -3411,13 +3563,19 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	msm_host->mmc->caps2 |= (MMC_CAP2_BOOTPART_NOACC |
 				MMC_CAP2_DETECT_ON_ERR);
 	msm_host->mmc->caps2 |= MMC_CAP2_CACHE_CTRL;
-	msm_host->mmc->caps2 |= MMC_CAP2_POWEROFF_NOTIFY;
+	msm_host->mmc->caps2 |= MMC_CAP2_FULL_PWR_CYCLE;
+#ifndef CONFIG_MACH_LGE
 	msm_host->mmc->caps2 |= MMC_CAP2_CLK_SCALE;
+#endif
 	msm_host->mmc->caps2 |= MMC_CAP2_STOP_REQUEST;
 	msm_host->mmc->caps2 |= MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE;
 	msm_host->mmc->pm_caps |= MMC_PM_KEEP_POWER | MMC_PM_WAKE_SDIO_IRQ;
 	msm_host->mmc->caps2 |= MMC_CAP2_CORE_PM;
 	msm_host->mmc->caps2 |= MMC_CAP2_SANITIZE;
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+	msm_host->mmc->caps2 |= MMC_CAP2_CAN_DO_CMDQ;
+	msm_host->mmc->caps2 |= MMC_CAP2_HYBRID_MODE;
+#endif
 #ifdef CONFIG_MACH_LGE
 #if defined (CONFIG_LGE_MMC_BKOPS_ENABLE) && defined(CONFIG_MMC_SDHCI_MSM)
 	/* LGE_CHANGE

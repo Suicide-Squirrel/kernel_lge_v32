@@ -126,10 +126,15 @@ static int tas2552_i2c_write(int reg, u8 value)
 #ifdef CONFIG_SND_SOC_DYBOOST
 void boost_control(struct work_struct *boost) {
 	u8 cfg2_reg;
-
+	int err_check = -1;
 	//pr_err("boost cmd: %d\n", boost_command);
 
-	cfg2_reg = tas2552_i2c_read(TAS2552_CFG_2);
+	err_check = tas2552_i2c_read(TAS2552_CFG_2);
+	if(err_check >= 0)
+		cfg2_reg = err_check;
+	else
+		return;
+
 	if (boost_command)
 		cfg2_reg |= (boost_command << 6);
 	else
@@ -140,10 +145,14 @@ void boost_control(struct work_struct *boost) {
 int tas2552_i2c_write_boost_cmd(u8 value)
 {
 	u8 cfg2_reg;
-
+	int err_check = -1;
 	//pr_err("boost cmd: %d\n", value);
+	err_check = tas2552_i2c_read(TAS2552_CFG_2);
+	if(err_check >= 0)
+		cfg2_reg = err_check;
+	else
+		return 0;
 
-	cfg2_reg = tas2552_i2c_read(TAS2552_CFG_2);
 	if (value)
 		cfg2_reg |= (value << 6);
 	else
@@ -274,14 +283,18 @@ static const struct attribute_group tas2552_attr_group = {
 static void tas2552_sw_shutdown(int sw_shutdown)
 {
 	u8 cfg1_reg;
-
+	int err_check = -1;
 	if (WARN_ON(!tas2552_client))
 		return;
 
 	dev_dbg(&tas2552_client->dev, "%s: %d\n",
 		__func__, sw_shutdown);
+	err_check = tas2552_i2c_read(TAS2552_CFG_1);
+	if(err_check >= 0)
+		cfg1_reg = err_check;
+	else
+		return;
 
-	cfg1_reg = tas2552_i2c_read(TAS2552_CFG_1);
 	if (sw_shutdown)
 		cfg1_reg |= (sw_shutdown << 1);
 	else
@@ -331,7 +344,9 @@ static int tas2552_init(struct snd_soc_codec *codec)
         return 1;
     if(tas2552_i2c_write(0x0A, 0x00) < 0)   // 0x0a: TAS2552_PLL_CTRL_3
         return 1;
-    if(tas2552_i2c_write(0x0B, 0x6D) < 0)   //0x0B : TAS2552_BTIP
+    if(tas2552_i2c_write(0x0B, 0x6D) < 0)   // 0x0B: TAS2552_BTIP
+        return 1;
+    if(tas2552_i2c_write(0x0C, 0x28) < 0)   // 0x0C: TAS2552_BTS_CTRL
         return 1;
     if(tas2552_i2c_write(0x0E, 0x18) < 0)   // 0x0E: TAS2552_LIMIT_RATE_HYS
         return 1;
@@ -445,6 +460,7 @@ static int tas2552_set_dai_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 {
 	u8 serial_format;
 	u8 serial_1_reg;
+	int err_check = -1;
 
 	dev_dbg(codec_dai->dev, "%s: fmt - 0x%4x\n", __func__, fmt);
 
@@ -464,8 +480,12 @@ static int tas2552_set_dai_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 	default:
 		return -EINVAL;
 	}
+	err_check = tas2552_i2c_read(TAS2552_SER_CTRL_1);
+	if(err_check >= 0)
+		serial_1_reg = err_check;
+	else
+		return 0;
 
-	serial_1_reg = tas2552_i2c_read(TAS2552_SER_CTRL_1);
 	serial_1_reg &= ~(TAS2552_BIT_CLK_MASK | TAS2552_WORD_CLK_MASK);
 	serial_1_reg |= serial_format;
 
@@ -488,8 +508,12 @@ static int tas2552_set_dai_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 	default:
 		return -EINVAL;
 	}
+	err_check = tas2552_i2c_read(TAS2552_SER_CTRL_1);
+	if(err_check >= 0)
+		serial_1_reg = err_check;
+	else
+		return 0;
 
-	serial_1_reg = tas2552_i2c_read(TAS2552_SER_CTRL_1);
 	serial_1_reg &= ~TAS2552_DATA_FORMAT_MASK;
 	serial_1_reg |= serial_format;
 
@@ -502,7 +526,7 @@ static int tas2552_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
 				  unsigned int freq, int dir)
 {
 	u8 cfg2_reg;
-
+	int err_check = -1;
 	switch (freq) {
 	case 12288000:
 	case 26000000:
@@ -519,15 +543,24 @@ static int tas2552_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
 	dev_dbg(dai->dev, "%s:\n", __func__);
 
 	tas2552_sw_shutdown(1);
-	cfg2_reg = tas2552_i2c_read(TAS2552_CFG_2);
+	err_check = tas2552_i2c_read(TAS2552_CFG_2);
+	if(err_check >= 0)
+		cfg2_reg = err_check;
+	else
+		return 0;
+
 	tas2552_i2c_write(TAS2552_CFG_2, cfg2_reg & ~TAS2552_PLL_ENABLE);
 
 //	tas2552_i2c_write(TAS2552_PLL_CTRL_1, 0x10);
     tas2552_i2c_write(TAS2552_PLL_CTRL_1, 0x20);
 	tas2552_i2c_write(TAS2552_PLL_CTRL_2, 0x00);
 	tas2552_i2c_write(TAS2552_PLL_CTRL_3, 0x00);
+	err_check = tas2552_i2c_read(TAS2552_CFG_2);
+	if(err_check >= 0)
+		cfg2_reg = err_check;
+	else
+		return 0;
 
-	cfg2_reg = tas2552_i2c_read(TAS2552_CFG_2);
 	tas2552_i2c_write(TAS2552_CFG_2, cfg2_reg | TAS2552_PLL_ENABLE);
 
 	tas2552_sw_shutdown(0);
@@ -538,6 +571,7 @@ static int tas2552_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
 static int tas2552_mute(struct snd_soc_dai *dai, int mute, int direction)
 {
 	u8 cfg1_reg;
+	int err_check = -1;
 
 	dev_dbg(dai->dev, "%s: %d\n", __func__, mute);
 
@@ -546,8 +580,12 @@ static int tas2552_mute(struct snd_soc_dai *dai, int mute, int direction)
 
 	if(!mute)
 		usleep(1000);
+	err_check = tas2552_i2c_read(TAS2552_CFG_1);
+	if(err_check >= 0)
+		cfg1_reg = err_check;
+	else
+		return 0;
 
-	cfg1_reg = tas2552_i2c_read(TAS2552_CFG_1);
 	if (mute)
 		cfg1_reg |= (mute << 2);
 	else
@@ -563,6 +601,7 @@ static int tas2552_startup(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_codec *codec = dai->codec;
 	u8 cfg2_reg;
+	int err_check = -1;
 
 	if(substream->stream == 1)
 		return 0;
@@ -579,8 +618,12 @@ static int tas2552_startup(struct snd_pcm_substream *substream,
 	tas2552_sw_shutdown(1);
 	tas2552_power(codec, 1);
 	/* Turn on Class D amplifier */
+	err_check = tas2552_i2c_read(TAS2552_CFG_2);
+	if(err_check >= 0)
+		cfg2_reg = err_check;
+	else
+		return 0;
 
-	cfg2_reg = tas2552_i2c_read(TAS2552_CFG_2);
 	cfg2_reg |= 0x80;
 
 	tas2552_i2c_write(TAS2552_CFG_2, cfg2_reg);
@@ -643,9 +686,15 @@ static struct snd_soc_dai_driver tas2552_dai[] = {
 void tas2552_check_reg(struct work_struct *boost)
 {
 	u8 cfg1_reg;
+	int err_check = -1;
 
 //	tas2552_get_client(codec->dev);
-	cfg1_reg = tas2552_i2c_read(TAS2552_CFG_1);
+	err_check = tas2552_i2c_read(TAS2552_CFG_1);
+	if(err_check >= 0)
+		cfg1_reg = err_check;
+	else
+		return;
+
     //printk("[audio bsp] get cfg1_reg = %d\n", cfg1_reg);
 
 	if(cfg1_reg & 0x20)
@@ -657,7 +706,8 @@ void tas2552_check_reg(struct work_struct *boost)
 		tas2552_i2c_write(0x08, 0x20);
 		tas2552_i2c_write(0x09, 0x00);
 		tas2552_i2c_write(0x0A, 0x00);
-		tas2552_i2c_write(0x0B, 0x6D);	//0x0B : TAS2552_BTIP
+		tas2552_i2c_write(0x0B, 0x6D);	// 0x0B: TAS2552_BTIP
+                tas2552_i2c_write(0x0C, 0x28);  // 0x0C: TAS2552_BTS_CTRL
 		tas2552_i2c_write(0x0E, 0x18);	// 0x0E: TAS2552_LIMIT_RATE_HYS
 		tas2552_i2c_write(0x0F, 0x00);  // 0x0F: TAS2552_LIMIT_RELEASE
 		tas2552_i2c_write(0x02, 0xEE);

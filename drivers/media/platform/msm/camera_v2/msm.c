@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -29,11 +29,9 @@
 #include "msm_vb2.h"
 #include "msm_sd.h"
 #include <media/msmb_generic_buf_mgr.h>
-/* LGE_CHANGE_S, camera stability task, added  msm-config debugfs*/
-#include <linux/debugfs.h>
-#define LGE_DEBUG_DISABLE_POSTEVENT_TIMEOUT 1
-#define LGE_DEBUG_PANIC_ON_POSTEVENT_TIMEOUT 2
-/* LGE_CHANGE_E, camera stability task, added  msm-config debugfs*/
+
+/*LGE_CHANGE, CST, added variable for debugfs*/
+static uint8_t msm_debug;
 
 static struct v4l2_device *msm_v4l2_dev;
 static struct list_head    ordered_sd_list;
@@ -191,6 +189,18 @@ static inline int __msm_queue_find_command_ack_q(void *d1, void *d2)
 	return (ack->stream_id == *(unsigned int *)d2) ? 1 : 0;
 }
 
+/* LGE_CHANGE, CST, check whether v4l2 events are subscribed */
+static inline bool msm_event_subscribed(
+               struct v4l2_fh *fh, u32 type, u32 id)
+{
+	struct v4l2_subscribed_event *sev;
+	assert_spin_locked(&fh->vdev->fh_lock);
+
+	list_for_each_entry(sev, &fh->subscribed, list)
+		if (sev->type == type && sev->id == id)
+			return true;
+	return false;
+}
 
 struct msm_session *msm_session_find(unsigned int session_id)
 {
@@ -246,8 +256,10 @@ void msm_delete_stream(unsigned int session_id, unsigned int stream_id)
 	spin_lock_irqsave(&(session->stream_q.lock), flags);
 	list_del_init(&stream->list);
 	session->stream_q.len--;
+	kfree(stream);
+	stream = NULL;
 	spin_unlock_irqrestore(&(session->stream_q.lock), flags);
-	kzfree(stream);
+
 }
 
 static void msm_sd_unregister_subdev(struct video_device *vdev)
@@ -465,8 +477,12 @@ static inline int __msm_sd_close_subdevs(struct msm_sd_subdev *msm_sd,
 static inline int __msm_destroy_session_streams(void *d1, void *d2)
 {
 	struct msm_stream *stream = d1;
+	unsigned long flags;
+
 	pr_err("%s: Error: Destroyed list is not empty\n", __func__);
+	spin_lock_irqsave(&stream->stream_lock, flags);
 	INIT_LIST_HEAD(&stream->queued_list);
+	spin_unlock_irqrestore(&stream->stream_lock, flags);
 	return 0;
 }
 
@@ -687,6 +703,20 @@ static void msm_print_event_error(struct v4l2_event *event)
 		event_data->session_id, event_data->stream_id,
 		event_data->arg_value);
 }
+/*LGE_CHANGE, CST, shutting down whent timed out in posting events */
+void msm_shutdown_imaging_server(struct video_device *vdev) {
+	struct v4l2_event event;
+	pr_err("%s: sending event to shutdown qcamsvr\n",__func__);
+
+	event.type = MSM_CAMERA_V4L2_EVENT_TYPE;
+	event.id = MSM_CAMERA_SHUTDOWN;
+	v4l2_event_queue(vdev, &event);
+	BIT_SET(msm_debug, LGE_DEBUG_BLOCK_POST_EVENT);
+
+	/* send v4l2_event to HAL next*/
+	msm_queue_traverse_action(msm_session_q, struct msm_session, list,
+		__msm_close_destry_session_notify_apps, NULL);
+}
 
 /* something seriously wrong if msm_close is triggered
  *   !!! user space imaging server is shutdown !!!
@@ -702,6 +732,7 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 	struct msm_command *cmd;
 	int session_id, stream_id;
 	unsigned long flags = 0;
+	struct v4l2_fh *fh; /* LGE_CHANGE, CST, v4l2 subscription check */
 
 	session_id = event_data->session_id;
 	stream_id = event_data->stream_id;
@@ -717,6 +748,26 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 
 	vdev = msm_eventq->vdev;
 
+	/* LGE_CHANGE, CST, check whether v4l2 events are subscribed */
+	if(event->id == MSM_CAMERA_NEW_SESSION) {
+		spin_lock_irqsave(&vdev->fh_lock, flags);
+		fh = (struct v4l2_fh *)vdev->fh_list.next;
+		if(!msm_event_subscribed(fh, event->type, event->id)) {
+			pr_err("%s :%d v4l2 events not subscribed yet! type(0x%x) id(0x%x)\n",
+				__func__, __LINE__, event->type, event->id);
+			spin_unlock_irqrestore(&vdev->fh_lock, flags);
+			return -EIO; //-EAGAIN; HAL to reopen camera repeatedly
+		}
+		spin_unlock_irqrestore(&vdev->fh_lock, flags);
+		if(BIT_ISSET(msm_debug, LGE_DEBUG_BLOCK_POST_EVENT))
+			BIT_CLR(msm_debug, LGE_DEBUG_BLOCK_POST_EVENT);
+	}
+
+	if(BIT_ISSET(msm_debug, LGE_DEBUG_BLOCK_POST_EVENT)) {
+		pr_err("%s:%d] blocking events while restarting qcamsvr\n",
+			__func__, __LINE__);
+		return rc;
+	}
 	/* send to imaging server and wait for ACK */
 	session = msm_queue_find(msm_session_q, struct msm_session,
 		list, __msm_queue_find_session, &session_id);
@@ -748,7 +799,7 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 		return rc;
 	}
 /* LGE_CHANGE_S, camera stability task, added  msm-config debugfs*/
-	if(vdev->debug == LGE_DEBUG_DISABLE_POSTEVENT_TIMEOUT) {
+	if(unlikely(BIT_ISSET(msm_debug, LGE_DEBUG_DISABLE_TIMEOUT))) {
 		msm_print_event_error(event);
 		wait_for_completion(&cmd_ack->wait_complete);
 	} else {
@@ -761,12 +812,9 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 				pr_err("%s: Timed out\n", __func__);
 				msm_print_event_error(event);
 				mutex_unlock(&session->lock);
-				BUG_ON(vdev->debug == LGE_DEBUG_PANIC_ON_POSTEVENT_TIMEOUT);
-/* LGE_CHANGE_S, Camera Recovery Code, 2014-12-25, yousung.kang@lge.com */
-			    pr_err("%s: ===== Camera Recovery Start! ===== \n", __func__);
-			    dump_stack();
-			    send_sig(SIGKILL, current, 0);
-/* LGE_CHANGE_E, Camera Recovery Code, 2014-12-25, yousung.kang@lge.com */
+				BUG_ON(unlikely(BIT_ISSET(msm_debug, LGE_DEBUG_PANIC_ON_TIMEOUT)));
+				dump_stack();
+				msm_shutdown_imaging_server(vdev);
 				return -ETIMEDOUT;
 			} else {
 				pr_err("%s: Error: No timeout but list empty!",
@@ -1017,19 +1065,30 @@ static void msm_sd_notify(struct v4l2_subdev *sd,
 /* LGE_CHANGE_S, camera stability task, added  msm-config debugfs*/
 static int msm_config_debugfs_get(void *data, u64 *val)
 {
-      struct video_device *vdev = (struct video_device *)data;
-
-       *val = vdev->debug;
+       *val = msm_debug;
        return 0;
 }
 
 static int msm_config_debugfs_set(void  *data, u64 val)
 {
-       struct video_device *vdev = (struct video_device *)data;
-
-       pr_err("%s: vdev(%p) changed from %d to %d \n", __func__, vdev,vdev->debug, (int)val);
-       vdev->debug=val;
-       return 0;
+	uint32_t key = LGE_DEBUG_PANIC_ON_TIMEOUT
+			^ LGE_DEBUG_DISABLE_TIMEOUT;
+	if(!val) {
+		pr_err("clear all bits \n");
+		msm_debug = 0;
+		return 0;
+	} else if(val > LGE_DEBUG_PANIC_ON_TIMEOUT) {
+		pr_err("bit(%d) is either reserved or disallowed\n",(int)val);
+		return 0;
+	} else {
+		pr_err("bit(%d) is set(prev(%x) \n", (int)val, msm_debug);
+		if(BIT_ISSET(msm_debug, LGE_DEBUG_DISABLE_TIMEOUT)
+			||BIT_ISSET(msm_debug, LGE_DEBUG_DISABLE_TIMEOUT)) {
+			BIT_CLR(msm_debug, (val^key));
+		}
+		BIT_SET(msm_debug, (uint8_t)val);
+	}
+	return 0;
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(msm_config_debugfs, msm_config_debugfs_get,
@@ -1044,7 +1103,7 @@ static int msm_config_create_debugfs(struct video_device *ctrl_t)
 	debugfs_base = debugfs_create_dir(dirname, NULL);
 	if (!debugfs_base)
 		return -ENOMEM;
-	if (!debugfs_create_file("disable_timeout", S_IRUGO | S_IWUSR, debugfs_base,
+	if (!debugfs_create_file("timeout", S_IRUGO | S_IWUSR, debugfs_base,
 		ctrl_t, &msm_config_debugfs))
 		return -ENOMEM;
 
@@ -1131,7 +1190,7 @@ static int msm_probe(struct platform_device *pdev)
 		goto v4l2_fail;
 /* LGE_CHANGE_S, camera stability task, added  msm-config debugfs*/
 	msm_config_create_debugfs(pvdev->vdev);
-	pvdev->vdev->debug = 0;
+	msm_debug = 0;
 /* LGE_CHANGE_E, camera stability task, added  msm-config debugfs*/
 	msm_init_queue(msm_session_q);
 	spin_lock_init(&msm_eventq_lock);

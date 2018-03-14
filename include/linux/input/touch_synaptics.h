@@ -255,6 +255,11 @@ struct synaptics_ts_f51_reg {
 	u8 lpwg_fail_count_reg;
 	u8 lpwg_fail_index_reg;
 	u8 lpwg_fail_reason_reg;
+	u8 lpwg_adc_offset_reg;
+	u8 lpwg_adc_fF_reg1;
+	u8 lpwg_adc_fF_reg2;
+	u8 lpwg_adc_fF_reg3;
+	u8 lpwg_adc_fF_reg4;
 };
 
 struct synaptics_ts_f54_reg {
@@ -263,6 +268,8 @@ struct synaptics_ts_f54_reg {
 	u8 current_noise_status;
 	u8 cid_im;
 	u8 freq_scan_im;
+	u8 incell_statistic;
+	u8 general_control;
 };
 
 struct function_descriptor {
@@ -455,6 +462,7 @@ struct synaptics_ts_data {
 	struct delayed_work		work_palm;
 	struct delayed_work		work_sleep;
 	struct wake_lock		timer_wake_lock;
+	struct wake_lock		touch_rawdata;
 	struct touch_platform_data	*pdata;
 	const struct state_info		*state;
 	struct state_flag		ts_state_flag;
@@ -479,6 +487,7 @@ struct synaptics_ts_exp_fn {
 };
 
 extern int touch_ta_status;
+extern int touch_wc_status;
 extern struct workqueue_struct *touch_wq;
 extern char f54_wlog_buf[6000];
 enum error_type synaptics_ts_init(struct i2c_client *client);
@@ -488,6 +497,7 @@ int compare_fw_version(struct i2c_client *client,
 /* mode:0 => write_log, mode:1 && buf => cat, mode:2 && buf => delta */
 extern int F54Test(int input, int mode, char *buf);
 extern int GetImageReport(char *buf);
+extern int firmware_upgrade_func_mfts(struct i2c_client *client);
 
 void synaptics_ts_prox_function(struct synaptics_ts_exp_fn *prox_fn,
 		bool insert);

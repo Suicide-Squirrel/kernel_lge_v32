@@ -28,6 +28,10 @@
 #define to_mmc_driver(d)	container_of(d, struct mmc_driver, drv)
 #define RUNTIME_SUSPEND_DELAY_MS 10000
 
+#if defined(CONFIG_MACH_MSM8992_P1) || defined(CONFIG_MACH_MSM8992_PPLUS)
+#define RUNTIME_SUSPEND_DELAY_MS_SD 90000
+#endif
+
 static ssize_t mmc_type_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -127,6 +131,8 @@ static void mmc_bus_shutdown(struct device *dev)
 {
 	struct mmc_driver *drv = to_mmc_driver(dev->driver);
 	struct mmc_card *card = mmc_dev_to_card(dev);
+	struct mmc_host *host = card->host;
+	int ret;
 
 	if (!drv) {
 		pr_debug("%s: %s: drv is NULL\n", dev_name(dev), __func__);
@@ -138,8 +144,15 @@ static void mmc_bus_shutdown(struct device *dev)
 		return;
 	}
 
-	if (drv->shutdown)
+	if (dev->driver && drv->shutdown)
 		drv->shutdown(card);
+
+	if (host->bus_ops->shutdown) {
+		ret = host->bus_ops->shutdown(host);
+		if (ret)
+			pr_warn("%s: error %d during shutdown\n",
+				mmc_hostname(host), ret);
+	}
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -311,6 +324,10 @@ static void mmc_release_card(struct device *dev)
 
 	sdio_free_common_cis(card);
 
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+	slw_uninit(&card->slw);
+#endif
+
 	kfree(card->info);
 
 	kfree(card);
@@ -470,7 +487,15 @@ int mmc_add_card(struct mmc_card *card)
 			pr_err("%s: %s: creating runtime pm sysfs entry: failed: %d\n",
 			       mmc_hostname(card->host), __func__, ret);
 		/* Default timeout is 10 seconds */
+
+#if defined(CONFIG_MACH_MSM8992_P1) || defined(CONFIG_MACH_MSM8992_PPLUS)
+		if(mmc_card_sd(card))
+			card->idle_timeout = RUNTIME_SUSPEND_DELAY_MS_SD;
+		else
+			card->idle_timeout = RUNTIME_SUSPEND_DELAY_MS;
+#else
 		card->idle_timeout = RUNTIME_SUSPEND_DELAY_MS;
+#endif
 	}
 
 	mmc_card_set_present(card);

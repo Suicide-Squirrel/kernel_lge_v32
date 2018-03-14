@@ -18,6 +18,7 @@
 #include "mdss_mdp_rotator.h"
 #include "mdss_panel.h"
 #include "mdss_mdp_trace.h"
+#include "mdss_debug.h"
 
 /*
  * if BWC enabled and format is H1V2 or 420, do not use site C or I.
@@ -454,6 +455,7 @@ static void mdss_mdp_writeback_intr_done(void *arg)
 	spin_unlock(&ctx->wb_lock);
 
 	complete_all(&ctx->wb_comp);
+	MDSS_XLOG(ctx->wb_num, ctx->type, ctx->xin_id, ctx->intf_num);
 }
 
 static bool mdss_mdp_traffic_shaper_helper(struct mdss_mdp_ctl *ctl,
@@ -552,6 +554,7 @@ static int mdss_mdp_wb_wait4comp(struct mdss_mdp_ctl *ctl, void *arg)
 	struct mdss_mdp_writeback_ctx *ctx;
 	int rc = 0;
 	u64 rot_time;
+	u32 status, mask, isr;
 
 	ctx = (struct mdss_mdp_writeback_ctx *) ctl->priv_data;
 	if (!ctx) {
@@ -568,14 +571,36 @@ static int mdss_mdp_wb_wait4comp(struct mdss_mdp_ctl *ctl, void *arg)
 		NULL, NULL);
 
 	if (rc == 0) {
-		mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_TIMEOUT);
-		rc = -ENODEV;
-		WARN(1, "writeback kickoff timed out (%d) ctl=%d\n",
-						rc, ctl->num);
+		mask = BIT(ctx->intr_type + ctx->intf_num);
+
+		isr = readl_relaxed(ctl->mdata->mdp_base +
+					MDSS_MDP_REG_INTR_STATUS);
+		status = mask & isr;
+
+		pr_info_once("mask: 0x%x, isr: 0x%x, status: 0x%x\n",
+				mask, isr, status);
+
+		if (status) {
+			pr_warn_once("wb done but irq not triggered\n");
+			mdss_mdp_irq_clear(ctl->mdata,
+					ctx->intr_type,
+					ctx->intf_num);
+
+			mdss_mdp_writeback_intr_done(ctl);
+			rc = 0;
+		} else {
+			mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_TIMEOUT);
+			rc = -ENODEV;
+			WARN(1, "writeback kickoff timed out (%d) ctl=%d\n",
+							rc, ctl->num);
+		}
 	} else {
+		rc = 0;
+	}
+
+	if (rc == 0) {
 		ctx->end_time = ktime_get();
 		mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_DONE);
-		rc = 0;
 	}
 
 	/* once operation is done, disable traffic shaper */
@@ -682,6 +707,8 @@ static int mdss_mdp_writeback_display(struct mdss_mdp_ctl *ctl, void *arg)
 	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_START, 1);
 	wmb();
 
+	MDSS_XLOG(ctx->wb_num, ctx->type, ctx->xin_id, ctx->intf_num,
+		ctx->dst_rect.w, ctx->dst_rect.h);
 	pr_debug("ctx%d type:%d xin_id:%d intf_num:%d start\n",
 		ctx->wb_num, ctx->type, ctx->xin_id, ctx->intf_num);
 

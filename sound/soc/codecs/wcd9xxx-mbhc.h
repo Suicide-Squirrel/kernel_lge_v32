@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -276,6 +276,13 @@ struct wcd9xxx_mbhc_config {
 	bool use_vddio_meas;
 	bool enable_anc_mic_detect;
 	enum hw_jack_type hw_jack_type;
+	int key_code[8];
+#ifdef CONFIG_SND_EAR_MIC_SWITCH
+    int hph_aud_sw;
+#endif
+#ifdef CONFIG_SND_SOC_HPH_WA
+	int mbhc_det_gpio;
+#endif
 };
 
 struct wcd9xxx_cfilt_mode {
@@ -328,6 +335,10 @@ struct wcd9xxx_mbhc {
 	bool polling_active;
 	/* Delayed work to report long button press */
 	struct delayed_work mbhc_btn_dwork;
+#ifdef CONFIG_MACH_LGE //miss_4pole_detected
+	struct delayed_work miss_4pole_detected_dwork;
+	bool miss_4pole_detected;
+#endif //miss_4pole_detected
 	int buttons_pressed;
 	enum wcd9xxx_mbhc_state mbhc_state;
 	struct wcd9xxx_mbhc_config *mbhc_cfg;
@@ -342,6 +353,9 @@ struct wcd9xxx_mbhc {
 
 #if defined(CONFIG_SND_LGE_HIDDEN_AUX)
 	bool mbhc_aux_extend_status;
+#endif
+#ifdef CONFIG_SND_SOC_HPH_WA
+	u32 mbhc_advanced_status;
 #endif
 
 	u32 hph_status; /* track headhpone status */
@@ -481,6 +495,7 @@ struct wcd9xxx_mbhc {
 	    (cfg_ptr->_n_rload * \
 	     (sizeof(cfg_ptr->_rload[0]) + sizeof(cfg_ptr->_alpha[0]))))
 
+int wcd9xxx_mbhc_set_keycode(struct wcd9xxx_mbhc *mbhc);
 int wcd9xxx_mbhc_start(struct wcd9xxx_mbhc *mbhc,
 		       struct wcd9xxx_mbhc_config *mbhc_cfg);
 void wcd9xxx_mbhc_stop(struct wcd9xxx_mbhc *mbhc);

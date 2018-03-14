@@ -531,6 +531,7 @@ receive:
 
 		buf = node->bclink.deferred_head;
 		node->bclink.deferred_head = buf->next;
+		buf->next = NULL;
 		node->bclink.deferred_size--;
 		goto receive;
 	}
@@ -632,7 +633,11 @@ static int tipc_bcbearer_send(struct sk_buff *buf,
 			tipc_bearer_send(b, buf, &b->bcast_addr);
 		} else {
 			/* Avoid concurrent buffer access */
+#ifdef CONFIG_LGP_DATA_TCPIP_MPTCP
+			tbuf = pskb_copy_for_clone(buf, GFP_ATOMIC);
+#else
 			tbuf = pskb_copy(buf, GFP_ATOMIC);
+#endif
 			if (!tbuf)
 				break;
 			tipc_bearer_send(b, tbuf, &b->bcast_addr);

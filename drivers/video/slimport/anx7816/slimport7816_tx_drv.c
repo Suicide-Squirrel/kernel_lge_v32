@@ -46,6 +46,7 @@ static unsigned char g_need_clean_status;
 /* HDCP switch for external block*/
 /* external_block_en = 1: enable, 0: disable*/
 extern int external_block_en;
+extern int hdcp_disable;
 
 #ifdef ENABLE_READ_EDID
 unsigned char g_edid_break;
@@ -262,6 +263,33 @@ unsigned char g_hdcp_cap_bak;
 	sp_write_reg(address, offset, (((unsigned char)__i2c_read_byte(address, offset)) & and_mask) | (or_mask))
 #define sp_write_reg_or_and(address, offset, or_mask, and_mask) \
 	sp_write_reg(address, offset, (((unsigned char)__i2c_read_byte(address, offset)) | or_mask) & (and_mask))
+
+unsigned char ANX_OUI[3] = { 0x00, 0x22, 0xB9 };
+
+unsigned char is_anx_dongle(void)
+{
+		unsigned char buf[3];
+			sp_tx_aux_dpcdread_bytes(0x00, 0x04, 0x00, 3, buf);
+
+				if (buf[0] == ANX_OUI[0] && buf[1] == ANX_OUI[1]
+							    && buf[2] == ANX_OUI[2]) {
+							return 1;
+									/* debug_puts("DPCD 400 show ANX-dongle"); */
+
+								}
+
+					/*  just for ANX7730 */
+					sp_tx_aux_dpcdread_bytes(0x00, 0x05, 0x00, 3, buf);
+
+						if (buf[0] == ANX_OUI[0] && buf[1] == ANX_OUI[1]
+									    && buf[2] == ANX_OUI[2]) {
+									return 1;
+											/* debug_puts("DPCD 500 show ANX-dongle"); */
+
+										}
+
+							return 0;
+}
 
 static unsigned char __i2c_read_byte(unsigned char dev, unsigned char offset)
 {
@@ -753,7 +781,11 @@ void sp_tx_initialization(void)
 	//sp_write_reg(TX_P2, SP_INT_MASK, 0X90);
 	sp_write_reg(TX_P2, SP_TX_INT_CTRL_REG, 0X01);
 	/*disable HDCP mismatch function for VGA dongle*/
-	//sp_write_reg(TX_P0, SP_TX_LT_SET_REG, 0);
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+    sp_write_reg(TX_P0, SP_TX_LT_SET_REG, 0x08); /* Swing : 1(400mv AMP), Pre-Emphasis : 2(6dB) */
+#else
+    sp_write_reg(TX_P0, SP_TX_LT_SET_REG, 0);
+#endif
 	sp_tx_link_phy_initialization();
 	gen_M_clk_with_downspeading();
 
@@ -896,14 +928,15 @@ unchar sp_tx_get_hdmi_connection(void)
 	unchar c;
 	/* msleep(200); */ /* why delay here? 20130217? */
 
-	if (AUX_OK != sp_tx_aux_dpcdread_bytes(0x00, 0x05, 0x18, 1, &c)) {
+	if(is_anx_dongle()){
+	if (AUX_OK != sp_tx_aux_dpcdread_bytes(0x00, 0x05, 0x18, 1, &c))
 		return 0;
-	}
-
 	if ((c & 0x41) == 0x41)
 		return 1;
 	 else
 		return 0;
+	}else
+		return sp_tx_get_dp_connection();
 
 }
 
@@ -924,8 +957,9 @@ unchar sp_tx_get_dp_connection(void)
 {
 	unchar c;
 
-	if (AUX_OK != sp_tx_aux_dpcdread_bytes(0x00, 0x02, DPCD_SINK_COUNT, 1, &c))
+	if (AUX_OK != sp_tx_aux_dpcdread_bytes(0x00, 0x02, DPCD_SINK_COUNT, 1, &c)){
 		return 0;
+	}
 
 	if (c & 0x1f) {
 		sp_tx_aux_dpcdread_bytes(0x00, 0x00, 0x04, 1, &c);
@@ -1757,6 +1791,7 @@ void slimport_link_training(void)
 					pr_err("%s: LGE_BOOT_MODE_QEM_56K - LT_SET_REG = xxx\n", __func__);
 				}
 			}
+			sp_write_reg(TX_P0, SP_TX_LT_SET_REG, 0x0); //add by leo 20150728
 
 			if (lge_get_boot_mode() != LGE_BOOT_MODE_QEM_56K) {
 				//power on main link before link training
@@ -2630,6 +2665,7 @@ void slimport_cable_monitor(void)
 void hdcp_external_ctrl_flag_monitor(void)
 {
 	static unchar cur_flag = 0;
+	static unchar hdcp_flag = 0;
 	if ((sp_tx_rx_type == DWN_STRM_IS_ANALOG)
 	|| (sp_tx_rx_type == DWN_STRM_IS_VGA_9832)) {
 		if (external_block_en != cur_flag) {
@@ -2637,6 +2673,10 @@ void hdcp_external_ctrl_flag_monitor(void)
 			system_state_change_with_case(STATE_HDCP_AUTH);
 		}
 
+	}
+	if (hdcp_disable != hdcp_flag) {
+		hdcp_flag = hdcp_disable;
+		system_state_change_with_case(STATE_HDCP_AUTH);
 	}
 }
 void slimport_state_process (void)

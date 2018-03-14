@@ -134,6 +134,11 @@ struct cfq_queue {
 	/* number of requests that are on the dispatch list or inside driver */
 	int dispatched;
 
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	int preempt_queue;
+	bool must_expire_cur_queue;
+#endif
+
 	/* io prio of this group */
 	unsigned short ioprio, org_ioprio;
 	unsigned short ioprio_class;
@@ -1090,6 +1095,11 @@ cfq_choose_req(struct cfq_data *cfqd, struct request *rq1, struct request *rq2, 
 	if (rq_is_sync(rq1) != rq_is_sync(rq2))
 		return rq_is_sync(rq1) ? rq1 : rq2;
 
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	if ((rq1->cmd_flags ^ rq2->cmd_flags) & REQ_PREEMPT)
+		return rq1->cmd_flags & REQ_PREEMPT ? rq1 : rq2;
+#endif
+
 	if ((rq1->cmd_flags ^ rq2->cmd_flags) & REQ_PRIO)
 		return rq1->cmd_flags & REQ_PRIO ? rq1 : rq2;
 
@@ -1163,6 +1173,10 @@ cfq_choose_req(struct cfq_data *cfqd, struct request *rq1, struct request *rq2, 
  */
 static struct cfq_queue *cfq_rb_first(struct cfq_rb_root *root)
 {
+#ifdef CONFIG_MACH_LGE
+	if(!root)
+		return NULL;
+#endif
 	/* Service tree is empty */
 	if (!root->count)
 		return NULL;
@@ -1275,12 +1289,16 @@ __cfq_group_service_tree_add(struct cfq_rb_root *st, struct cfq_group *cfqg)
 static void
 cfq_update_group_weight(struct cfq_group *cfqg)
 {
-	BUG_ON(!RB_EMPTY_NODE(&cfqg->rb_node));
-
 	if (cfqg->new_weight) {
 		cfqg->weight = cfqg->new_weight;
 		cfqg->new_weight = 0;
 	}
+}
+
+static void
+cfq_update_group_leaf_weight(struct cfq_group *cfqg)
+{
+	BUG_ON(!RB_EMPTY_NODE(&cfqg->rb_node));
 
 	if (cfqg->new_leaf_weight) {
 		cfqg->leaf_weight = cfqg->new_leaf_weight;
@@ -1299,7 +1317,7 @@ cfq_group_service_tree_add(struct cfq_rb_root *st, struct cfq_group *cfqg)
 	/* add to the service tree */
 	BUG_ON(!RB_EMPTY_NODE(&cfqg->rb_node));
 
-	cfq_update_group_weight(cfqg);
+	cfq_update_group_leaf_weight(cfqg);
 	__cfq_group_service_tree_add(st, cfqg);
 
 	/*
@@ -1323,6 +1341,7 @@ cfq_group_service_tree_add(struct cfq_rb_root *st, struct cfq_group *cfqg)
 	 */
 	while ((parent = cfqg_parent(pos))) {
 		if (propagate) {
+			cfq_update_group_weight(pos);
 			propagate = !parent->nr_active++;
 			parent->children_weight += pos->weight;
 		}
@@ -1994,6 +2013,31 @@ cfq_link_cfqq_cfqg(struct cfq_queue *cfqq, struct cfq_group *cfqg) {
 
 #endif /* GROUP_IOSCHED */
 
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+static struct cfq_queue *cfq_choose_wl_type_best_rb_key(struct cfq_data *cfqd,
+			struct cfq_group *cfqg, struct cfq_queue*cfqq, enum wl_class_t wl_class)
+{
+	struct cfq_queue *queue;
+	int i;
+	bool key_valid = false;
+	unsigned long lowest_key = 0;
+	struct cfq_queue *cur_cfqq = cfqq;
+
+	for (i = 0; i <= SYNC_WORKLOAD; ++i) {
+		/* select the one with lowest rb_key */
+		queue = cfq_rb_first(st_for(cfqg, wl_class, i));
+		if (queue &&
+		    (!key_valid || time_before(queue->rb_key, lowest_key))) {
+			lowest_key = queue->rb_key;
+			cur_cfqq = queue;
+			key_valid = true;
+		}
+	}
+
+	return cur_cfqq;
+}
+#endif
+
 /*
  * The cfqd->service_trees holds all pending cfq_queue's that have
  * requests waiting to be processed. It is sorted in the order that
@@ -2008,6 +2052,9 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	struct cfq_rb_root *st;
 	int left;
 	int new_cfqq = 1;
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	struct cfq_queue *tmp_cfqq = NULL;
+#endif
 
 	st = st_for(cfqq->cfqg, cfqq_class(cfqq), cfqq_type(cfqq));
 	if (cfq_class_idle(cfqq)) {
@@ -2032,6 +2079,17 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 		rb_key = -HZ;
 		__cfqq = cfq_rb_first(st);
 		rb_key += __cfqq ? __cfqq->rb_key : jiffies;
+
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		/* Desc : if request has REQ_PREEMPT in cfqq, save rb_key value lower than lowest rb_key in service*/
+		if(cfqq->preempt_queue) {
+			if((tmp_cfqq = (cfq_choose_wl_type_best_rb_key(cfqd, cfqq->cfqg, cfqq, cfqq_class(cfqq)))) != cfqq) {
+				rb_key = tmp_cfqq->rb_key-1;
+				cfq_log_cfqq(cfqd, cfqq,"service_tree_add(3-2)-[queue] cfqq(%p) rb_key(%ld)",
+						tmp_cfqq, tmp_cfqq->rb_key);
+			}
+		}
+#endif
 	}
 
 	if (!RB_EMPTY_NODE(&cfqq->rb_node)) {
@@ -2308,6 +2366,16 @@ static void cfq_remove_request(struct request *rq)
 	cfq_del_rq_rb(rq);
 
 	cfqq->cfqd->rq_queued--;
+
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	if (rq->cmd_flags & REQ_PREEMPT) {
+		cfqq->preempt_queue = (cfqq->preempt_queue>0)?cfqq->preempt_queue-1:0;
+		rq->cmd_flags &= ~(REQ_PREEMPT);
+		if (!cfqq->preempt_queue)
+			cfqq->must_expire_cur_queue = true;
+	}
+#endif
+
 	cfqg_stats_update_io_remove(RQ_CFQG(rq), rq->cmd_flags);
 	if (rq->cmd_flags & REQ_PRIO) {
 		WARN_ON(!cfqq->prio_pending);
@@ -3187,8 +3255,18 @@ static bool cfq_may_dispatch(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 	/*
 	 * Drain async requests before we start sync IO
 	 */
-	if (cfq_should_idle(cfqd, cfqq) && cfqd->rq_in_flight[BLK_RW_ASYNC])
+	if (cfq_should_idle(cfqd, cfqq) && cfqd->rq_in_flight[BLK_RW_ASYNC]) {
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		/*
+		 * It's correct for READ IO(sync) to wait async requests completion.
+		 * But Write sync request don't need wait for async requests.
+		 */
+		if (cfqq->preempt_queue) {
+			return true;
+		}
+#endif
 		return false;
+	}
 
 	/*
 	 * If this is an async queue and we have sync IO in flight, let it wait
@@ -3573,6 +3651,11 @@ retry:
 
 	blkcg = bio_blkcg(bio);
 	cfqg = cfq_lookup_create_cfqg(cfqd, blkcg);
+	if (!cfqg) {
+		cfqq = &cfqd->oom_cfqq;
+		goto out;
+	}
+
 	cfqq = cic_to_cfqq(cic, is_sync);
 
 	/*
@@ -3609,7 +3692,7 @@ retry:
 		} else
 			cfqq = &cfqd->oom_cfqq;
 	}
-
+out:
 	if (new_cfqq)
 		kmem_cache_free(cfq_pool, new_cfqq);
 
@@ -3639,12 +3722,17 @@ static struct cfq_queue *
 cfq_get_queue(struct cfq_data *cfqd, bool is_sync, struct cfq_io_cq *cic,
 	      struct bio *bio, gfp_t gfp_mask)
 {
-	const int ioprio_class = IOPRIO_PRIO_CLASS(cic->ioprio);
-	const int ioprio = IOPRIO_PRIO_DATA(cic->ioprio);
+	int ioprio_class = IOPRIO_PRIO_CLASS(cic->ioprio);
+	int ioprio = IOPRIO_PRIO_DATA(cic->ioprio);
 	struct cfq_queue **async_cfqq = NULL;
 	struct cfq_queue *cfqq = NULL;
 
 	if (!is_sync) {
+		if (!ioprio_valid(cic->ioprio)) {
+			struct task_struct *tsk = current;
+			ioprio = task_nice_ioprio(tsk);
+			ioprio_class = task_nice_ioclass(tsk);
+		}
 		async_cfqq = cfq_async_queue_prio(cfqd, ioprio_class, ioprio);
 		cfqq = *async_cfqq;
 	}
@@ -3872,6 +3960,11 @@ cfq_rq_enqueued(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	if (rq->cmd_flags & REQ_PRIO)
 		cfqq->prio_pending++;
 
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+	if (rq->cmd_flags & REQ_PREEMPT)
+		cfqq->preempt_queue++;
+#endif
+
 	cfq_update_io_thinktime(cfqd, cfqq, cic);
 	cfq_update_io_seektime(cfqd, cfqq, rq);
 	cfq_update_idle_window(cfqd, cfqq, cic);
@@ -4069,6 +4162,17 @@ static void cfq_completed_request(struct request_queue *q, struct request *rq)
 			cfq_mark_cfqq_wait_busy(cfqq);
 			cfq_log_cfqq(cfqd, cfqq, "will busy wait");
 		}
+
+#ifdef CONFIG_MACH_MSM8992_PPLUS
+		if (cfqq->must_expire_cur_queue){
+			if (!cfqq->preempt_queue){
+				cfqq->must_expire_cur_queue = false;
+				cfq_slice_expired(cfqd, 0);
+				cfq_schedule_dispatch(cfqd);
+				return;
+			}
+		}
+#endif
 
 		/*
 		 * Idling is not enabled on:

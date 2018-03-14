@@ -110,7 +110,6 @@ enum mdss_hw_index {
 	MDSS_HW_DSI1,
 	MDSS_HW_HDMI,
 	MDSS_HW_EDP,
-	MDSS_HW_IOMMU,
 	MDSS_MAX_HW_BLK
 };
 
@@ -118,12 +117,16 @@ enum mdss_bus_clients {
 	MDSS_MDP_RT,
 	MDSS_DSI_RT,
 	MDSS_MDP_NRT,
+	MDSS_IOMMU_RT,
 	MDSS_MAX_BUS_CLIENTS
 };
 
 enum mdss_hw_quirk {
 	MDSS_QUIRK_BWCPANIC,
 	MDSS_QUIRK_DOWNSCALE_HANG,
+	MDSS_QUIRK_DOWNSCALE_HFLIP_MDPCLK,
+	MDSS_QUIRK_SVS_PLUS_VOTING,
+	MDSS_QUIRK_BASE_FULLSCREEN,
 	MDSS_QUIRK_MAX,
 };
 
@@ -143,6 +146,13 @@ struct mdss_data_type {
 	struct dss_io_data vbif_io;
 	struct dss_io_data vbif_nrt_io;
 	char __iomem *mdp_base;
+
+	/* Used to store if vote to enable svs plus has been sent or not */
+	u32 svs_plus_vote;
+	/* Min rate from where SVS plus vote is needed */
+	u32 svs_plus_min;
+	/* Max rate till where SVS plus vote is needed */
+	u32 svs_plus_max;
 
 	struct mutex reg_lock;
 
@@ -208,6 +218,8 @@ struct mdss_data_type {
 	u32 *vbif_rt_qos;
 	u32 *vbif_nrt_qos;
 	u32 npriority_lvl;
+	u32 bus_bw_cnt;
+	struct mutex bus_bw_lock;
 
 	u32 reg_bus_hdl;
 
@@ -235,6 +247,7 @@ struct mdss_data_type {
 	u32 nrgb_pipes;
 	u32 ndma_pipes;
 	u32 max_target_zorder;
+	u32 cursor_stage;
 	u8  ncursor_pipes;
 	u32 max_cursor_size;
 
@@ -259,8 +272,6 @@ struct mdss_data_type {
 	void *video_intf;
 	u32 nintf;
 
-	int pp_enable;
-
 	struct mdss_mdp_ad *ad_off;
 	struct mdss_ad_info *ad_cfgs;
 	u32 nad_cfgs;
@@ -273,6 +284,8 @@ struct mdss_data_type {
 	int iommu_attached;
 	struct mdss_iommu_map_type *iommu_map;
 
+	struct debug_bus *dbg_bus;
+	u32 dbg_bus_size;
 	struct mdss_debug_inf debug_inf;
 	bool mixer_switched;
 	struct mdss_panel_cfg pan_cfg;
@@ -292,6 +305,15 @@ struct mdss_data_type {
 
 	u64 ab[MDSS_MAX_BUS_CLIENTS];
 	u64 ib[MDSS_MAX_BUS_CLIENTS];
+#ifdef CONFIG_LGE_VSYNC_SKIP
+	char enable_skip_vsync;
+	ulong skip_value;
+	ulong weight;
+	ulong bucket;
+	ulong skip_count;
+	int skip_ratio;
+	bool skip_first;
+#endif
 };
 extern struct mdss_data_type *mdss_res;
 
@@ -363,6 +385,12 @@ static inline void mdss_set_quirk(struct mdss_data_type *mdata,
 	enum mdss_hw_quirk bit)
 {
 	set_bit(bit, mdata->mdss_quirk_map);
+}
+
+static inline void mdss_clear_quirk(struct mdss_data_type *mdata,
+	enum mdss_hw_quirk bit)
+{
+	clear_bit(bit, mdata->mdss_quirk_map);
 }
 
 static inline bool mdss_has_quirk(struct mdss_data_type *mdata,

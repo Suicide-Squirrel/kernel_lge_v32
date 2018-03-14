@@ -18,10 +18,11 @@ struct unified_wlc_platform_data {
 	unsigned int wlc_rx_off;
 };
 
+#if defined(CONFIG_LGE_TOUCH_CORE)
+extern void touch_notify_wireless(u32 type);
+#endif
+
 #ifdef CONFIG_LGE_PM_UNIFIED_WLC_ALIGNMENT
 #define WLC_ALIGN_INTERVAL	(300)
 #endif
-
-extern void wireless_interrupt_handler(bool dc_present);
-extern void wireless_chg_term_handler(void);
 #endif

@@ -407,7 +407,7 @@ static int mmc_ffu_restart(struct mmc_card *card)
 	struct mmc_host *host = card->host;
 	int err = 0;
 
-	mmc_cache_ctrl(host, 0);
+	mmc_flush_cache(host->card);
 	err = mmc_power_save_host(host);
 	if (err) {
 		pr_warn("%s: going to sleep failed (%d)!!!\n",
@@ -501,6 +501,13 @@ int mmc_ffu_download(struct mmc_card *card, struct mmc_command *cmd,
 	} else if (card->cid.manfid == 0x45 ) { // Sandisk SEM
 //		cmd->arg = 0x00000000;
 	}
+#ifdef CONFIG_LGE_MMC_CQ_ENABLE
+    // CQ disable during ffu
+    ret = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+            EXT_CSD_CMDQ_MODE_EN,
+            EXT_CSD_CMDQ_MODE_OFF,
+            card->ext_csd.generic_cmd6_time);
+#endif
 
 	err = mmc_ffu_write(card, data, cmd->arg, buf_bytes);
 
